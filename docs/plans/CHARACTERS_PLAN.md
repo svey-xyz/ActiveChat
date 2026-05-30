@@ -1,12 +1,13 @@
 # Plan: In-Memory Characters for ActiveChat
 
 > **Scope note.** This introduces a roster of **persistent-for-the-session, in-world
-> personas** that speak the ambient World/Guild chatter. They are generated at
-> startup, live entirely in Lua memory, and are discarded on every server reset —
-> **no DB, no creatures, no per-character persistence** (consistent with the
-> philosophy already established in `PLAYER_INTERACTION_PLAN.md`). The point is to
-> make the city feel populated by *recurring* voices with consistent identity and
-> mood, rather than an endless stream of one-off random names.
+> personas** that speak the ambient World/Guild chatter. They are generated
+> **lazily** — created on demand as chatter is emitted, up to a configurable
+> `maxCharacters` cap — live entirely in Lua memory, and are discarded on every
+> server reset — **no DB, no creatures, no per-character persistence** (consistent
+> with the philosophy already established in `PLAYER_INTERACTION_PLAN.md`). The point
+> is to make the city feel populated by *recurring* voices with consistent identity
+> and mood, rather than an endless stream of one-off random names.
 
 ## Decisions locked (from review)
 
@@ -29,9 +30,15 @@
    set is `shared ∪ alliance`; a Horde character's is `horde` only. Audience follows
    the pool the chosen line came from (shared → everyone, alliance → Alliance, horde
    → Horde).
-6. **Per-character cadence.** Each character carries its own jittered timer scaled by
-   `chattiness`, rather than one global tick selecting an initiator. Chatter density
-   emerges from the roster.
+6. **Single global timer + lazy incremental generation.** Keep the original
+   per-channel global-tick model (one timer each for shared-world, alliance-world,
+   horde-world, and the guild variants) — **not** one timer per character. On each
+   tick the speaker is resolved: pick an existing character (weighted by
+   `chattiness`) **or**, if none is picked and the roster is below `maxCharacters`,
+   generate a fresh character on the spot. The roster therefore accretes from empty
+   as chatter happens and stabilizes at the cap. `chattiness` is now a *selection
+   weight*, not a personal timer frequency. (Total chatter volume stays fixed by the
+   timer intervals and is decoupled from roster size.)
 7. **All toggles stay configurable**; content depth grows later (so the engine must
    behave sanely from sparse → rich content without code changes).
 8. **Traits stay internal** for now. No player-facing surfacing; a debug/admin
@@ -65,14 +72,16 @@ zone-specific and weighted per area.
   `GetPlayersInWorld(team)` for faction scoping; `formatWorld` / `formatGuild` apply
   the colored `[World]`/`[Guild]` name prefix.
 
-The renderer, substitution, formatting, and faction scoping all stay. What changes is
-**who speaks** (roster, not random names), **how each character is scheduled**
-(per-character cadence, not one global tick), and **how a line is chosen for that
-speaker** (trait + area weighting, not a random index).
+The renderer, substitution, formatting, faction scoping, **and the per-channel global
+timers all stay**. What changes is **who speaks** (a lazily-grown roster, not a fresh
+random name each line) and **how a line is chosen for that speaker** (trait + area
+weighting, not a random index). The roster is built incrementally at tick time rather
+than at startup.
 
 ## The character model
 
-Generated at startup, held in a module-level table, never persisted:
+Generated lazily at tick time (see selection engine), held in a module-level table,
+never persisted:
 
 ```lua
 local character = {
@@ -82,7 +91,7 @@ local character = {
   personality = "warm",              -- 1-3 word descriptor (one of PERSONALITIES)
   area        = "city",              -- locale affinity (one of AREAS)
   homeCity    = "Stormwind",         -- a capital matching their faction
-  chattiness  = 0.72,                -- 0..1 — drives this character's timer frequency
+  chattiness  = 0.72,                -- 0..1 — selection weight when a tick resolves a speaker
   friendliness= 0.55,                -- 0..1 — likelihood to join a duo/group
   color       = "C79C6E",            -- stable name color (picked once, from t.cc)
 }
@@ -92,10 +101,11 @@ Notes:
 
 - **Faction is intrinsic.** Characters are Alliance or Horde. Per decision 5, the
   everyone-visible `shared` pool is voiced only by Alliance characters.
-- **`chattiness` vs `friendliness` are distinct levers.** Chattiness sets how *short*
-  this character's own timer interval is (how often they speak at all). Friendliness
-  sets how likely they are to be pulled in as a *co-speaker* when someone else starts
-  a duo/group. A gruff hermit can be chatty but unfriendly, and vice versa.
+- **`chattiness` vs `friendliness` are distinct levers.** Chattiness is the weight a
+  character carries when a global tick resolves who speaks — higher chattiness ⇒
+  chosen more often across ticks. Friendliness sets how likely they are to be pulled
+  in as a *co-speaker* when someone else starts a duo/group. A gruff hermit can be
+  chatty but unfriendly, and vice versa.
 - **`area` is a locale affinity**, assigned at generation with a bias from `role`
   (guard/vendor/innkeeper → `city`; soldier/adventurer → `battlefield`; farmer/sailor
   → `rural`) plus randomness so the roster isn't rigidly typed. It governs which
@@ -214,23 +224,41 @@ The retag is mechanical but large (~600 lines across two files):
 
 ## Selection engine (how traits + area choose chatter)
 
-Replaces "random index + random name." Built around per-character cadence
-(decision 6) and a single reusable roster-query seam (decision 9).
+Replaces "random index + random name." Built around the original per-channel global
+timers (decision 6) and a single reusable roster-query seam (decision 9).
 
-### Per-character scheduling
+### Speaker resolution with lazy generation (decision 6)
 
-At startup, after the roster is built, schedule **one recurring timer per character**
-for world chat, with the interval scaled by `chattiness`:
+The existing per-channel timers are kept as-is. When one fires, it gates on
+`GetPlayersInWorld(team)` for its audience (no online listeners ⇒ skip silently, no
+cursor churn), then resolves a speaker for the target faction:
 
 ```
-interval = lerp(worldCadence.max, worldCadence.min, chattiness) ± jitter
-CreateLuaEvent(fireFor(char, "world"), {interval_lo, interval_hi}, 0)
+resolveSpeaker(faction) ->
+  candidates = rosterByFaction[faction]              -- may be empty early on
+  -- weighted roulette over: each existing character (weight = chattiness)
+  --                         + one VIRTUAL "new character" slot (weight = newCharacterWeight)
+  pick = weightedPick(candidates by chattiness, plus virtualNew = newCharacterWeight)
+  if pick == virtualNew and #roster < maxCharacters then
+      return generateCharacter(faction)              -- spawn, register, speak this tick
+  elseif pick == virtualNew then
+      return weightedPick(candidates by chattiness)  -- at cap: fall back to reuse
+  else
+      return pick
 ```
 
-Guild chat reuses the same mechanism at a longer multiplier
-(`guildCadenceMultiplier`) so guild stays sparser, per existing behavior. When a
-character's timer fires, it gates on `GetPlayersInWorld(team)` for the relevant
-audience — no online listeners of that audience ⇒ skip silently (no cursor churn).
+This makes spawning **self-balancing**: when the faction roster is empty or small its
+summed chattiness weight is low, so the virtual slot usually wins and the population
+grows; as it fills, existing weight dominates and spawning tapers, halting at
+`maxCharacters`. Cold start (empty roster) always spawns, since the virtual slot is
+the only candidate. `newCharacterWeight` tunes how eagerly the world populates.
+
+`generateCharacter(faction)` runs the same assignment logic the startup builder would
+have (role → area bias, personality, home city, traits, `generateName`), registers
+the character in `roster` / `rosterByFaction`, and returns it to speak immediately.
+
+For `shared` (everyone-visible) ticks, `resolveSpeaker("alliance")` is used so the
+voice is always Alliance (decision 5).
 
 ### Candidate set & audience (decision 5)
 
@@ -262,25 +290,32 @@ Stormwind" guard.
 
 ### Cast assembly (duos/groups)
 
-Initiator is speaker A / first voice. Co-speakers are drawn from the same-faction
-roster (for `shared` lines, the Alliance roster) weighted by `friendliness`,
-preferring `role`/`mood`/`area` compatibility with the chosen line, deduped against
-the initiator. Reuses the existing distinct-speaker guard logic over *characters*.
+The resolved initiator is speaker A / first voice. Co-speakers are drawn from the
+same-faction roster (for `shared` lines, the Alliance roster) weighted by
+`friendliness`, preferring `role`/`mood`/`area` compatibility with the chosen line,
+deduped against the initiator. If the faction roster is too small to fill the cast,
+co-speakers are lazily generated the same way (subject to `maxCharacters`). Reuses the
+existing distinct-speaker guard logic over *characters*.
 
 ### Reusable roster-query seam (decision 9)
 
-All speaker selection funnels through one function so player-interaction can reuse it:
+Speaker selection funnels through two thin functions so player-interaction can reuse
+them:
 
 ```lua
--- weightField: "chattiness" (initiator) or "friendliness" (co-speaker / responder)
--- filters (all optional): faction, role, mood, area, excludeGuid/excludeName
+-- resolveSpeaker(faction) — weighted pick over existing (by chattiness) + virtual
+--   new-character slot; lazily spawns under maxCharacters (see above).
+-- pickCharacter(weightField, filters) — pick an EXISTING character only.
+--   weightField: "chattiness" | "friendliness"
+--   filters (all optional): faction, role, mood, area, excludeName, allowSpawn
 pickCharacter(weightField, filters) -> character | nil
 ```
 
-The ambient initiator pick is `pickCharacter("chattiness", {faction=…})`; cast
-assembly is repeated `pickCharacter("friendliness", {faction=…, role/mood/area=…})`.
-A future player responder is just `pickCharacter("friendliness", {faction=playerTeam,
-role=…, mood=…})` — a recurring resident answers, not a stranger.
+Ambient initiator = `resolveSpeaker(faction)`; cast assembly = repeated
+`pickCharacter("friendliness", {faction=…, role/mood/area=…, allowSpawn=true})`. A
+future player responder is `pickCharacter("friendliness", {faction=playerTeam,
+role=…, mood=…})` — a recurring resident answers, not a stranger (and may spawn one if
+the roster is thin and `allowSpawn` is set).
 
 ### Rendering & emit
 
@@ -294,50 +329,55 @@ consistency; otherwise random as today.
 All configurable, sensible defaults (decision 7):
 
 ```lua
-local characterCount        = 24      -- roster size generated at startup (the conf var)
-local factionSplit          = 0.5     -- fraction of roster that is Alliance (rest Horde)
-local worldCadence          = {30000, 120000}  -- ms interval bounds; chattiness maps within
-local guildCadenceMultiplier= 3       -- guild timers run this much slower than world
-local cadenceJitter         = 0.25    -- ± fraction applied to each character's interval
+local maxCharacters         = 24      -- cap on the lazily-grown roster (the conf var)
+local maxCharactersPerFaction = nil   -- optional per-faction sub-cap (nil = share maxCharacters)
+local newCharacterWeight    = 8       -- virtual "spawn a new character" weight vs existing chattiness
 local lineCooldownTicks     = 8       -- default per-line repeat cooldown
 local homeCityBias          = true    -- bias %city% toward a speaker's home city
 local roleMoodMatchStrength = 3.0     -- how hard role/mood matching is weighted (1 = off)
 local areaMatchStrength     = 3.0     -- how hard area matching is weighted (1 = off)
 ```
 
-`characterCount` is the requested startup conf variable. Generation runs once in
-`t.init`, after name data loads.
+The existing interval config (`talk_time`, `guild_talk_time`, `faction_talk_time`,
+`guild_faction_time`) is unchanged — those drive the per-channel timers as before.
+`maxCharacters` is the requested conf variable; the roster starts empty and grows on
+demand. `newCharacterWeight` tunes how fast it populates relative to reuse.
 
 ## Phased implementation
 
 1. **Data tables** — add `ROLES` (with area affinity), `PERSONALITIES`, `AREAS`;
    restructure `npc_name.lua` to `{alliance, horde, surnames}`; add epithet/prefix
    pools. Pure data.
-2. **Roster generation** — `generateName`, `buildRoster(characterCount)` (assigns
-   faction/role/personality/area/home/traits), wire into `t.init`. Verify offline.
-3. **`pickCharacter` seam + tagged parser** — the reusable roster query, and extend
-   `buildItems` for the new shapes (back-compatible). Load-test both content files.
+2. **Lazy generation** — `generateName`, `generateCharacter(faction)` (assigns
+   role/personality/area/home/traits, registers in the roster), and the empty-roster
+   scaffolding in `t.init`. Verify offline by repeatedly generating and printing.
+3. **`resolveSpeaker` / `pickCharacter` seam + tagged parser** — the weighted pick
+   with the virtual new-character slot and `maxCharacters` cap, plus extend
+   `buildItems` for the new tagged shapes (back-compatible). Load-test both files.
 4. **Selection engine** — line scoring (role/mood/area/weight/recency), cast assembly
-   by friendliness, Alliance-voices-`shared` candidate/audience rule.
-5. **Per-character cadence** — replace global ambient timers with per-character world
-   (+ guild-multiplier) timers; online-audience gating.
-6. **Content retag** — duos/groups → `{chain=…}`; tag obvious lines by
+   by friendliness, Alliance-voices-`shared` candidate/audience rule. Keep the
+   existing per-channel timers; swap their speaker source to `resolveSpeaker`.
+5. **Content retag** — duos/groups → `{chain=…}`; tag obvious lines by
    role/mood/area; leave generic ones untagged & global. Bulk-wrap via script, hand-
    tag the rest.
-7. **Polish & docs** — `homeCity` bias, color stability; README for the character
+6. **Polish & docs** — `homeCity` bias, color stability; README for the character
    model, the `area` tag (global vs zone-specific), and the new authoring format.
 
-Phases 1–5 can ship with content still mostly untagged (everything falls back to
-global wildcard), so the roster + cadence go live before the retag finishes.
+Phases 1–4 can ship with content still mostly untagged (everything falls back to
+global wildcard), so the roster goes live before the retag finishes.
 
 ## Verification
 
 - **Load/syntax:** `luac -p` (or `load`) every touched file after each phase.
-- **Offline roster harness:** generate N; assert names unique, faction split ≈
-  `factionSplit`, every character has valid role/personality/area/home, name patterns
-  appear ≈ target proportions, area affinity correlates with role.
-- **Selection harness (seeded RNG):** over K ticks assert (a) chattier characters
-  fire more often, (b) a vendor/city character draws vendor/city lines above chance
+- **Offline generation harness:** generate many characters; assert names unique,
+  every character has valid role/personality/area/home, name patterns appear ≈ target
+  proportions, area affinity correlates with role.
+- **Lazy-growth harness (seeded RNG):** drive K ticks from an empty roster and assert
+  (a) the first tick spawns (cold start), (b) the roster grows then plateaus exactly
+  at `maxCharacters` (never exceeds it), (c) spawn rate tapers as the roster fills
+  (higher `newCharacterWeight` ⇒ faster fill), (d) once at cap it's pure reuse.
+- **Selection harness (seeded RNG):** over K ticks assert (a) chattier characters are
+  picked more often, (b) a vendor/city character draws vendor/city lines above chance
   while still occasionally drawing globals, (c) a city character **never** draws a
   battlefield-only line, (d) graded areas resolve in the right proportion
   (battlefield ≫ rural for the ambush line), (e) cooldowns are respected, (f) no
@@ -345,9 +385,10 @@ global wildcard), so the roster + cadence go live before the retag finishes.
   Alliance characters.
 - **`pickCharacter` unit test:** filters compose correctly; weight field switches
   between chattiness/friendliness; returns `nil` gracefully when no online faction.
-- **In-game:** World/Guild still flow; names recur with stable color; toggle
-  `characterCount` (1, 24, 100) without error; faction-scoped lines reach only the
-  right faction; Alliance-only vs everyone audiences land correctly.
+- **In-game:** World/Guild still flow; names recur with stable color; the roster
+  visibly populates over the first minutes then settles; toggle `maxCharacters`
+  (1, 24, 100) without error; faction-scoped lines reach only the right faction;
+  Alliance-only vs everyone audiences land correctly.
 - **Tone check:** read tagged lines beside their role/area — a "vendor/gruff/city"
   line should sound like a gruff city vendor; mismatches get retagged or untagged.
 - **Regression:** faction gating and the legacy `enableFactionChat=false` path still
@@ -355,15 +396,15 @@ global wildcard), so the roster + cadence go live before the retag finishes.
 
 ## Open decisions for you
 
-1. **Roster size vs. content depth.** With ~600 lines and 24 characters, recurrence
-   feels populated but lines repeat. Bump default `characterCount`, lower per-line
-   `cooldown`, or just grow content later (decision 7 leans here)?
+1. **Roster size vs. content depth.** With ~600 lines and a 24-character cap,
+   recurrence feels populated but lines repeat. Bump default `maxCharacters`, lower
+   per-line `cooldown`, or just grow content later (decision 7 leans here)?
 2. **Area granularity.** Start with `city / rural / battlefield`, or seed a couple
    more now (`coast`, `wilderness`, `road`) so early content can tag richer settings
    before the migration locks in conventions?
 3. **Character area drift.** Static per-character area affinity is the v1. Want a
    future hook noted for deriving a character's *effective* area from a real player's
    zone (true zone-specific chatter), or keep that out of scope entirely?
-4. **Guild voicing.** Should guild chatter use the same per-character roster + cadence
-   (a guild reads like a recurring cast), or stay a lighter shared stream? Currently
-   planned as same roster, slower multiplier.
+4. **Guild voicing.** Should guild chatter resolve speakers from the same roster (a
+   guild reads like a recurring cast), or stay a lighter shared stream? Currently
+   planned as the same roster, with the guild's own (slower) existing timers.
