@@ -1,15 +1,21 @@
 --[[
-  NPC display names, faction-aware.
-    neutral  -> used for SHARED world/guild lines (seen by everyone); ambiguous fantasy surnames.
-    alliance -> used for Alliance-only lines (human / dwarf / night elf / draenei / gnome flavor).
-    horde    -> used for Horde-only lines (orc / tauren / troll / forsaken / blood elf flavor).
-  If a DB name source is set in npcTalk.lua (ns), those names are appended to `neutral`.
+  NPC display names -- the name-generation source pools for the character roster.
+
+  Shape: { alliance = <first-name list>, horde = <first-name list>, surnames = <list> }
+    alliance -> per-faction FIRST names (human / dwarf / night elf / draenei / gnome flavor).
+    horde    -> per-faction FIRST names (orc / tauren / troll / forsaken / blood elf flavor).
+    surnames -> faction-agnostic SURNAME pool (Stormbringer, Frostguard, ...), used by the
+                "{first} {last}" name pattern in generateName (see npcTalk.lua).
+
+  generateName draws a first name from the speaker's faction pool and (for most
+  patterns) a surname from the shared surnames pool. The optional DB-name source
+  (the `ns` query in npcTalk.lua) appends into `surnames`.
 ]]--
 
-return {
+local names = {
 
-  neutral = {
-    -- existing pool, used for everyone-visible (shared) chatter
+  surnames = {
+    -- faction-agnostic surname pool. Used by the "{first} {last}" name pattern.
     "Aethersworn", "Blazebinder", "Crystalvein", "Duskweaver", "Emberstrider", "Frostguard",
     "Glimmerblade", "Hollowgaze", "Ironshaper", "Jadefury", "Kraghammer", "Lunarbloom",
     "Mysticwind", "Netherbraid", "Orchidshade", "Pridewalker", "Quartzfang", "Runebound",
@@ -90,3 +96,5 @@ return {
   },
 
 }
+
+return names
