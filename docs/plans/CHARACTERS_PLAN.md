@@ -1,7 +1,7 @@
 # Plan: In-Memory Characters for ActiveChat
 
 > **Scope note.** This introduces a roster of **persistent-for-the-session, in-world
-> personas** that speak the ambient World/Guild chatter. They are generated
+> personas** that speak the ambient World chatter. They are generated
 > **lazily** — created on demand as chatter is emitted, up to a configurable
 > `maxCharacters` cap — live entirely in Lua memory, and are discarded on every
 > server reset — **no DB, no creatures, no per-character persistence** (consistent
@@ -32,7 +32,7 @@
    → Horde).
 6. **Single global timer + lazy incremental generation.** Keep the original
    per-channel global-tick model (one timer each for shared-world, alliance-world,
-   horde-world, and the guild variants) — **not** one timer per character. On each
+   horde-world) — **not** one timer per character. On each
    tick the speaker is resolved: pick an existing character (weighted by
    `chattiness`) **or**, if none is picked and the roster is below `maxCharacters`,
    generate a fresh character on the spot. The roster therefore accretes from empty
@@ -47,6 +47,12 @@
    ambient speakers is designed as a single reusable function so a future
    player-interaction responder (`PLAYER_INTERACTION_PLAN.md`) draws a *known
    recurring resident* from this same roster, not a fresh random name.
+10. **Drop Guild chat entirely.** A guild is a player-organization construct that
+    doesn't fit the civilian/guard/NPC scope. As part of this work, remove guild
+    emission outright: delete `talk_text/npc_text_guild.lua`, the `enableGuildChat`
+    flag, the `guild_talk_time` / `guild_faction_time` intervals, the `formatGuild`
+    helper, and the guild `CreateLuaEvent` blocks in `npcTalk.lua`. The module
+    becomes World-chat-only.
 
 **New tag: `area`** — `city`, `rural`, `battlefield` (extensible). Both characters
 and lines carry area information so setting-specific chatter lands where it fits: an
@@ -61,16 +67,18 @@ zone-specific and weighted per area.
 - **Names** are drawn fresh-random per line via `nameFrom(faction)` /
   `twoNames(faction)` / `manyNames(faction, n)` from the `{neutral, alliance, horde}`
   pools in `npc_name.lua`. **This is what the roster replaces.**
-- **Content** loads from `talk_text/npc_text.lua` and `npc_text_guild.lua`, each
-  returning `{ shared, alliance, horde }`, every faction pool being
-  `{ lines, duos, groups }`. `buildItems(...)` flattens these into a cursored,
-  kind-tagged item list (`kind = "line" | "duo" | "group"`).
+- **Content** loads from `talk_text/npc_text.lua` (the guild file
+  `npc_text_guild.lua` is **removed** — decision 10), returning
+  `{ shared, alliance, horde }`, every faction pool being `{ lines, duos, groups }`.
+  `buildItems(...)` flattens these into a cursored, kind-tagged item list
+  (`kind = "line" | "duo" | "group"`).
 - **Rendering** (`t.fg` / `t.dt`) walks the cursor, assigns a cast via `castFor`,
   picks speakers via `speakerFor` (A/B alternation for duos, non-repeating rotation
   for groups), then runs ~44 `%token%` substitutions.
 - **Emission** via `CreateLuaEvent(fn, {min,max}, 0)` repeating timers;
-  `GetPlayersInWorld(team)` for faction scoping; `formatWorld` / `formatGuild` apply
-  the colored `[World]`/`[Guild]` name prefix.
+  `GetPlayersInWorld(team)` for faction scoping; `formatWorld` applies the colored
+  `[World]` name prefix. (`formatGuild` and the `[Guild]` path are removed —
+  decision 10.)
 
 The renderer, substitution, formatting, faction scoping, **and the per-channel global
 timers all stay**. What changes is **who speaks** (a lazily-grown roster, not a fresh
@@ -319,7 +327,7 @@ the roster is thin and `allowSpawn` is set).
 
 ### Rendering & emit
 
-Hand the chosen character(s) to the existing `formatWorld` / `formatGuild`
+Hand the chosen character(s) to the existing `formatWorld`
 (`char.name`, `char.color`), then run the existing `%token%` substitution. With
 `homeCityBias`, `%city%` defaults to the speaker's `homeCity` for self-reference
 consistency; otherwise random as today.
@@ -338,13 +346,19 @@ local roleMoodMatchStrength = 3.0     -- how hard role/mood matching is weighted
 local areaMatchStrength     = 3.0     -- how hard area matching is weighted (1 = off)
 ```
 
-The existing interval config (`talk_time`, `guild_talk_time`, `faction_talk_time`,
-`guild_faction_time`) is unchanged — those drive the per-channel timers as before.
-`maxCharacters` is the requested conf variable; the roster starts empty and grows on
-demand. `newCharacterWeight` tunes how fast it populates relative to reuse.
+The retained interval config (`talk_time`, `faction_talk_time`) is unchanged — those
+drive the World per-channel timers as before. The guild intervals
+(`guild_talk_time`, `guild_faction_time`) and the `enableGuildChat` flag are
+**removed** (decision 10). `maxCharacters` is the requested conf variable; the roster
+starts empty and grows on demand. `newCharacterWeight` tunes how fast it populates
+relative to reuse.
 
 ## Phased implementation
 
+0. **Drop Guild chat** — delete `talk_text/npc_text_guild.lua`; remove the
+   `enableGuildChat` flag, `guild_talk_time` / `guild_faction_time`, `formatGuild`,
+   and the guild `CreateLuaEvent` blocks from `npcTalk.lua`. Standalone, mechanical
+   cleanup; do it first so later phases touch a World-only engine.
 1. **Data tables** — add `ROLES` (with area affinity), `PERSONALITIES`, `AREAS`;
    restructure `npc_name.lua` to `{alliance, horde, surnames}`; add epithet/prefix
    pools. Pure data.
@@ -385,7 +399,8 @@ global wildcard), so the roster goes live before the retag finishes.
   Alliance characters.
 - **`pickCharacter` unit test:** filters compose correctly; weight field switches
   between chattiness/friendliness; returns `nil` gracefully when no online faction.
-- **In-game:** World/Guild still flow; names recur with stable color; the roster
+- **In-game:** World chat still flows (and **no** Guild chat is emitted); names recur
+  with stable color; the roster
   visibly populates over the first minutes then settles; toggle `maxCharacters`
   (1, 24, 100) without error; faction-scoped lines reach only the right faction;
   Alliance-only vs everyone audiences land correctly.
@@ -405,6 +420,3 @@ global wildcard), so the roster goes live before the retag finishes.
 3. **Character area drift.** Static per-character area affinity is the v1. Want a
    future hook noted for deriving a character's *effective* area from a real player's
    zone (true zone-specific chatter), or keep that out of scope entirely?
-4. **Guild voicing.** Should guild chatter resolve speakers from the same roster (a
-   guild reads like a recurring cast), or stay a lighter shared stream? Currently
-   planned as the same roster, with the guild's own (slower) existing timers.
