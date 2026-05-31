@@ -9,7 +9,24 @@
 > is to make the city feel populated by *recurring* voices with consistent identity
 > and mood, rather than an endless stream of one-off random names.
 
-# Extensions (planned)
+## Relevant docs
+
+- docs/characters.md
+- PLAYER_COMMANDS_PLAN.md (creation reuses Part A's `gender`/`nameParts`)
+- ZONE_AWARE_PLAN.md (builds on the shipped character system)
+
+## Completed
+
+- Base character system — DONE. Lazy roster, `generateCharacter` / `buildName` /
+  `renderTokens` machinery in `npcTalk.lua`. The extensions below are planned.
+
+---
+
+## Phases (planned)
+
+### **Phase 1**
+
+#### Note
 
 > Added after the base character system shipped. These build on the existing
 > `generateCharacter` / `buildName` / `renderTokens` machinery in `npcTalk.lua`.
@@ -19,7 +36,14 @@
 > **name as structured parts plus a gender** fixes all three at once, so do that
 > first — the rest depend on it.
 
-## Extension A — Structured name parts + `gender` (foundation)
+#### Dependencies & order
+
+A (structured names + gender) is the foundation. B (gendered tags + pronouns) needs
+A's `gender`. C (`%target%`) needs A's `nameParts`. Build **Part A → Part B → Part C**.
+All three preserve the "no character ever goes silent / no orphan token" invariants the
+base system guarantees. See `TODO.md` for the cross-plan ordering.
+
+#### Part A — Structured name parts + `gender` (foundation)
 
 **Problem.** `buildName` returns a flat display string assembled from a gendered
 prefix (`ROLES[role].prefixes`), a first name, an optional surname, and an optional
@@ -90,7 +114,7 @@ female first name carries a male-only prefix and vice-versa across a large sampl
 `generateCharacter` calls; confirm `gender` is always set and `nameParts.first` is
 always non-empty.
 
-## Extension B — Gendered line tags + pronoun tokens
+#### Part B — Gendered line tags + pronoun tokens
 
 With `gender` on the character, lines can be gender-fit and pronoun tokens resolve
 correctly.
@@ -104,7 +128,7 @@ invariant is preserved (a gendered line is never *required*). Wire it into
 gender-neutral.
 
 **Pronoun tokens** resolved in `renderTokens` from `speaker.gender` (and, once
-Extension C lands, from the target's gender for replies):
+Part C lands, from the target's gender for replies):
 
 | Token | male | female | neutral |
 |---|---|---|---|
@@ -117,7 +141,7 @@ Each is one `string.gsub` keyed off `speaker.gender`, following the same pattern
 the other resolvers in `renderTokens`. Capitalized variants (`%Heshe%`) only if a
 line needs a sentence-initial pronoun; otherwise authors phrase around it.
 
-## Extension C — Addressing other speakers (`%target%`)
+#### Part C — Addressing other speakers (`%target%`)
 
 **Goal.** In a duo/group, let one speaker name another cast member — *"Well said,
 Captain."* / *"Cedric, you're dreaming."* — and let a reply name the speaker who just
@@ -137,7 +161,7 @@ gsubs. `speakerForLine` already tracks `prevName`; keep a parallel `prevChar` (o
 the character up in `st.cast` by name) so the target is a full character, not just a
 string — needed for its `nameParts` and `gender`.
 
-**Short forms (don't always use the full name).** Using `nameParts` from Extension A,
+**Short forms (don't always use the full name).** Using `nameParts` from Part A,
 add `addressName(targetChar)` returning a weighted variant so address feels natural
 and varied — *Captain Cedric* can be addressed as *Captain*, *Cedric*, or the full
 name:
@@ -158,7 +182,7 @@ addressName(c) -- weighted pick over the parts that exist:
   small pool) so a mis-tagged single line never renders a literal `%target%`.
 - `%targetfull%` → `target.name` (full), same fallback pool.
 
-Pronoun tokens (Extension B) can also be made target-aware for third-person replies
+Pronoun tokens (Part B) can also be made target-aware for third-person replies
 (*"%heshe% knows the way"* referring to the prior speaker) — but keep speaker-pronouns
 the default; only resolve target-pronouns for explicitly third-person reply lines if
 you add a tag for it. Simpler first cut: ship `%target%`/`%targetfull%` only.
@@ -168,9 +192,3 @@ you add a tag for it. Simpler first cut: ship `%target%`/`%targetfull%` only.
 back to a vocative elsewhere. Add `%target%` to `renderTokens` *and* the
 `gen_manifest.py` token set so the orphan-token check stays honest.
 
-## Dependencies & order
-
-A (structured names + gender) is the foundation. B (gendered tags + pronouns) needs
-A's `gender`. C (`%target%`) needs A's `nameParts`. Build **A → B → C**. All three
-preserve the "no character ever goes silent / no orphan token" invariants the base
-system guarantees. See `TODO.md` for the cross-plan ordering.

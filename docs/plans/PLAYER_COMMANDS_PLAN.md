@@ -1,26 +1,44 @@
 # Plan: In-Game Player Commands for ActiveChat
 
-> Status: **planned**. Distinct from `PLAYER_INTERACTION_PLAN.md` (that's
-> in-character *reactions* to player chat; this is *out-of-character tooling* — dot
-> commands that inspect and seed the roster). Depends on the structured character
-> model in `CHARACTERS_PLAN.md` (esp. Extension A: `gender`/`nameParts`), since
-> creation lets players choose those traits.
+> **Scope note.** Two `.`-commands served from `npcTalk.lua` that let a player **create**
+> a roster character (picking traits) and **inspect** an existing one. Out-of-character
+> tooling, not chatter — output goes to the requesting player only, never into World
+> chat. Distinct from `PLAYER_INTERACTION_PLAN.md` (that's in-character *reactions* to
+> player chat). Depends on the structured character model in `CHARACTERS_PLAN.md` (esp.
+> Phase 1 Part A: `gender`/`nameParts`), since creation lets players choose those traits.
 
-## Goal
+## Relevant docs
 
-Two `.` commands, served from `npcTalk.lua`:
+- docs/characters.md
+- docs/config.md
+- CHARACTERS_PLAN.md (Phase 1 Part A — `gender`/`nameParts` foundation)
+- PLAYER_INTERACTION_PLAN.md (shares the logout-cleanup hook)
 
-1. **Create a character** — a player spawns a roster character, choosing from the
-   available traits (faction, role, personality, area, gender, and optionally a name).
-   Unspecified traits are filled randomly. The character joins the in-memory roster and
-   can speak immediately, like any generated one.
-2. **Inspect a character** — given a name (or a pick from the current roster), print
-   that character's traits to the requesting player.
+## Completed
 
-Both are debugging/worldbuilding affordances, **not** in-world chatter — output goes to
-the requesting player only, plainly formatted, not into World chat.
+- None yet — all phases below are planned.
 
-## Engine seam (what we build on)
+---
+
+## Phases (planned)
+
+### **Phase 1 — Player create/inspect commands**
+
+#### Note
+
+> **Goal.** Two `.` commands, served from `npcTalk.lua`:
+>
+> 1. **Create a character** — a player spawns a roster character, choosing from the
+>    available traits (faction, role, personality, area, gender, and optionally a name).
+>    Unspecified traits are filled randomly. The character joins the in-memory roster and
+>    can speak immediately, like any generated one.
+> 2. **Inspect a character** — given a name (or a pick from the current roster), print
+>    that character's traits to the requesting player.
+>
+> Both are debugging/worldbuilding affordances, **not** in-world chatter — output goes to
+> the requesting player only, plainly formatted, not into World chat.
+
+**Engine seam (what we build on).**
 
 - `generateCharacter(faction)` already does the full trait roll + registration
   (`roster` / `rosterByFaction` / `usedNames`). Creation is "the same, but with
@@ -35,10 +53,16 @@ the requesting player only, plainly formatted, not into World chat.
   via `player:GossipMenuAddItem` / `player:GossipSendMenu` + `RegisterPlayerGossipEvent`
   drives the trait-picker UI.
 
-## New factory: `createCharacter(opts)`
+#### Dependencies & order
 
-Refactor `generateCharacter` so the trait-rolling body takes an optional overrides
-table; `generateCharacter(faction)` becomes `createCharacter({faction=faction})`:
+Depends on `CHARACTERS_PLAN.md` Phase 1 Part A (`gender`/`nameParts`) for gender-correct
+created names. Reuse `PLAYER_INTERACTION_PLAN.md`'s logout cleanup hook if both ship.
+See `TODO.md` for cross-plan ordering (inspect is independent; create waits on A).
+
+#### Part A — New factory: `createCharacter(opts)`
+
+**Approach.** Refactor `generateCharacter` so the trait-rolling body takes an optional
+overrides table; `generateCharacter(faction)` becomes `createCharacter({faction=faction})`:
 
 ```lua
 -- opts (all optional except resolved faction): faction, role, personality,
@@ -48,7 +72,7 @@ local function createCharacter(opts)
   local faction     = opts.faction     or (math.random() < 0.5 and "alliance" or "horde")
   local role        = opts.role        or pickRoleWeighted()
   local personality = opts.personality or moodKeys[math.random(#moodKeys)]
-  local gender      = opts.gender      or rollGender()           -- from CHARACTERS_PLAN Ext. A
+  local gender      = opts.gender      or rollGender()           -- from CHARACTERS_PLAN Phase 1 Part A
   local area        = opts.area        or biasedArea(role)       -- existing role→area bias
   local name        = opts.name        or generateName(faction, role, personality, gender)
   -- …assemble, validate name uniqueness, register in roster/rosterByFaction, return
@@ -59,7 +83,7 @@ Validation: reject unknown role/mood/area/gender (the menus only offer valid one
 a typed-arg form must guard); dedupe a supplied `name` against `usedNames`; refuse if
 `rosterAtCap(faction)` and no player allowance remains.
 
-## Command surface
+#### Part B — Command surface
 
 Use a single namespaced command prefix so it's one hook and discoverable:
 
@@ -76,10 +100,8 @@ Use a single namespaced command prefix so it's one hook and discoverable:
 the subcommand, `return false` to swallow it (so it doesn't error as an unknown GM
 command). Anything not starting with `ac` passes through untouched.
 
-### Creation UX — gossip trait-picker (recommended)
-
-`.ac create` opens a player gossip menu that walks the trait vocabularies, one step per
-trait, then spawns:
+**Creation UX — gossip trait-picker (recommended).** `.ac create` opens a player gossip
+menu that walks the trait vocabularies, one step per trait, then spawns:
 
 1. **Faction** → Alliance / Horde.
 2. **Role** → enumerate `roleKeys` (Guard, Citizen, Vendor, …).
@@ -95,10 +117,9 @@ Each step stores the partial selection in a per-player scratch table
 the picker with no extra wiring. (Name entry from gossip is awkward; default to a
 rolled name with a re-roll button, and allow a custom name only via the arg form.)
 
-### Inspection output
-
-`.ac who <name>` finds the character in `roster` (case-insensitive exact, then prefix
-match; if ambiguous, list candidates) and sends the requester a compact dump:
+**Inspection output.** `.ac who <name>` finds the character in `roster` (case-insensitive
+exact, then prefix match; if ambiguous, list candidates) and sends the requester a
+compact dump:
 
 ```
 [ActiveChat] Sister Maelara — alliance priest, female
@@ -109,7 +130,7 @@ match; if ambiguous, list candidates) and sends the requester a compact dump:
 via `player:SendBroadcastMessage`. `.ac list` prints one line per character (cap the
 output, e.g. first 40 + a count) so a 128-character roster doesn't flood chat.
 
-## Config additions (top of `npcTalk.lua`)
+#### Part C — Config
 
 ```lua
 local enablePlayerCommands = true
@@ -117,13 +138,22 @@ local playerCreateGmOnly   = false   -- true = restrict .ac create to GMs (playe
 local playerCreateLimit    = 5       -- max characters one player may spawn per session (anti-spam)
 ```
 
-## Edge cases / correctness checklist
+#### Build order
+
+1. **Factory refactor** — `createCharacter(opts)`; `generateCharacter` delegates to it.
+   Verify existing ambient spawning is unchanged (regression).
+2. **Inspect** — `.ac who` / `.ac list` (read-only, lowest risk; ship first).
+3. **Create (arg form)** — `.ac create k=v …` with validation + cap/limit handling.
+4. **Create (gossip picker)** — the stepwise menu over `roleKeys`/`moodKeys`/`AREAS`.
+5. **Logout cleanup + README** — document commands, flags, and the ephemeral nature.
+
+#### Edge cases / correctness checklist
 
 - Unknown subcommand / bad `k=v` → print `.ac help`, don't error; `return false`.
 - Invalid trait value (arg form) → reject with the valid set listed; menu form can't hit
   this since it only offers valid options.
 - Roster cap — player creations count against `maxCharacters`; if at cap, refuse with a
-  clear message (or consume `playerCreateLimit` allowance — decide in open questions).
+  clear message (or consume `playerCreateLimit` allowance — decide in open decisions).
 - Name collisions — dedupe against `usedNames`; reject or auto-suffix.
 - Per-player scratch state (`pcreate`) and create-count cleared on
   `PLAYER_EVENT_ON_LOGOUT` (reuse the interaction plan's cleanup hook if both ship).
@@ -134,26 +164,17 @@ local playerCreateLimit    = 5       -- max characters one player may spawn per 
 - Gossip menu IDs and `PLAYER_EVENT_ON_COMMAND`/`ON_GOSSIP` numeric IDs **must** be
   verified against the running mod-ale build (use the `azerothcore-ale-scripting` skill).
 
-## Phased implementation
-
-1. **Factory refactor** — `createCharacter(opts)`; `generateCharacter` delegates to it.
-   Verify existing ambient spawning is unchanged (regression).
-2. **Inspect** — `.ac who` / `.ac list` (read-only, lowest risk; ship first).
-3. **Create (arg form)** — `.ac create k=v …` with validation + cap/limit handling.
-4. **Create (gossip picker)** — the stepwise menu over `roleKeys`/`moodKeys`/`AREAS`.
-5. **Logout cleanup + README** — document commands, flags, and the ephemeral nature.
-
-## Verification
+#### Verification
 
 - `_luacheck.py` on `npcTalk.lua`.
 - Offline: `createCharacter({role="guard", gender="female"})` yields a guard with a
-  gender-correct name/prefix (depends on CHARACTERS_PLAN Ext. A) and is registered once.
+  gender-correct name/prefix (depends on CHARACTERS_PLAN Phase 1 Part A) and is registered once.
 - In-game: `.ac create` walks the menu and the spawned character can speak; `.ac who`
   on it prints matching traits; `.ac list` is bounded; cap/limit refuses cleanly; a
   non-`ac` command still works normally; toggle `enablePlayerCommands=false` (silent
   no-op); `playerCreateGmOnly=true` blocks a non-GM.
 
-## Open decisions
+#### Open decisions
 
 - **Who may create** — all players vs GM-only (`playerCreateGmOnly`). Default open with
   a per-session `playerCreateLimit`; flip to GM-only if abused.

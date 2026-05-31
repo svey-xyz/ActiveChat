@@ -9,11 +9,11 @@ detail.
 
 | Idea (from the brain-dump) | Plan | Section |
 |---|---|---|
-| Context tags on placeholder tokens (food → eggs in the morning, not meat pie) | [CONTEXT_AWARE_PLAN.md](./CONTEXT_AWARE_PLAN.md) | Extension D |
-| Leading-`a` grammar inconsistency across critter/companion/drink tokens | [CONTEXT_AWARE_PLAN.md](./CONTEXT_AWARE_PLAN.md) | Extension E |
-| Gendered tags | [CHARACTERS_PLAN.md](./CHARACTERS_PLAN.md) | Extension A + B |
-| Tokenized names/roles ("Sister Cedric" should be gender-correct) | [CHARACTERS_PLAN.md](./CHARACTERS_PLAN.md) | Extension A |
-| `%target%` — address another speaker by (short) name | [CHARACTERS_PLAN.md](./CHARACTERS_PLAN.md) | Extension C |
+| Context tags on placeholder tokens (food → eggs in the morning, not meat pie) | [CONTEXT_AWARE_PLAN.md](./CONTEXT_AWARE_PLAN.md) | Phase 8 Part A |
+| Leading-`a` grammar inconsistency across critter/companion/drink tokens | [CONTEXT_AWARE_PLAN.md](./CONTEXT_AWARE_PLAN.md) | Phase 8 Part B |
+| Gendered tags | [CHARACTERS_PLAN.md](./CHARACTERS_PLAN.md) | Phase 1 Part A + B |
+| Tokenized names/roles ("Sister Cedric" should be gender-correct) | [CHARACTERS_PLAN.md](./CHARACTERS_PLAN.md) | Phase 1 Part A |
+| `%target%` — address another speaker by (short) name | [CHARACTERS_PLAN.md](./CHARACTERS_PLAN.md) | Phase 1 Part C |
 | Zone-specific chatter + proximity + per-area timers (drop alliance/horde/shared timers) | [ZONE_AWARE_PLAN.md](./ZONE_AWARE_PLAN.md) | whole doc |
 | Multi-line conversations on their own faster timer/knob | [CONVERSATION_PACING_PLAN.md](./CONVERSATION_PACING_PLAN.md) | whole doc |
 | In-game `.` commands: create a character (pick traits) / inspect a character's traits | [PLAYER_COMMANDS_PLAN.md](./PLAYER_COMMANDS_PLAN.md) | whole doc |
@@ -22,19 +22,19 @@ detail.
 
 ```
 A. Structured names + gender  ─┬─> B. Gendered line tags + pronoun tokens
-   (CHARACTERS Ext. A)         │
-                               └─> C. %target% address token (CHARACTERS Ext. C)
+   (CHARACTERS Phase 1 Part A) │
+                               └─> C. %target% address token (CHARACTERS Phase 1 Part C)
                                └─> Player commands "create" (PLAYER_COMMANDS_PLAN)
 
 E. Token article/grammar rule ───> D. Context-aware token values
-   (CONTEXT_AWARE Ext. E)            (CONTEXT_AWARE Ext. D)   [same pool reshape — one pass]
+   (CONTEXT_AWARE Phase 8 Part B)    (CONTEXT_AWARE Phase 8 Part A)  [same pool reshape — one pass]
 
 Zone-aware delivery (ZONE_AWARE_PLAN) ──coordinate──> Conversation pacing
    (per-zone delivery groups)                          (key conversation state by zone)
 ```
 
 Independent tracks: **{A→B,C}**, **{E→D}**, **{Zone + Pacing}**, **{Player commands
-(inspect)}** can all proceed in parallel; player-command *creation* waits on A.
+(inspect)}** can all proceed in parallel; player-command *creation* waits on Part A.
 
 ## Suggested build order
 
@@ -68,11 +68,11 @@ Independent tracks: **{A→B,C}**, **{E→D}**, **{Zone + Pacing}**, **{Player c
 ## Smaller / loose items
 
 - Capitalized pronoun variants (`%Heshe%`) only if a line needs sentence-initial
-  pronouns — otherwise authors phrase around it (see CHARACTERS Ext. B).
+  pronouns — otherwise authors phrase around it (see CHARACTERS Phase 1 Part B).
 - `AREAS` `coast`/`wilderness`/`road` currently fold into city/rural/battlefield via the
   zone map; revisit giving them their own timers once the three-timer model is proven
   (ZONE_AWARE_PLAN).
 - Decide `%a% %food%` (look-ahead article) vs combined `%afood%` tokens — recommended
-  `%afood%` to sidestep look-ahead (CONTEXT_AWARE Ext. E).
+  `%afood%` to sidestep look-ahead (CONTEXT_AWARE Phase 8 Part B).
 - Player-command cap accounting (shared vs reserved roster slice) — open decision in
   PLAYER_COMMANDS_PLAN.

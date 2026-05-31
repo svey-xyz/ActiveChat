@@ -10,7 +10,25 @@
 > "looks like a real player" framing. If that bar can't be met for a given
 > category, leave the category out.
 
-## Framing (read first)
+## Relevant docs
+
+- docs/placeholders.md
+- README.md (feature flags + reaction authoring format)
+- CONTEXT_AWARE_PLAN.md (responders read the shared `ctx`)
+- CONVERSATION_PACING_PLAN.md (shares the staggered burst renderer)
+
+## Completed
+
+- None yet — all phases below are planned. (Optional, secondary feature — may stay
+  shelved indefinitely; see the open decisions at the end.)
+
+---
+
+## Phases (planned)
+
+### **Phase 1 — In-character player responses**
+
+#### Framing (read first)
 
 ActiveChat is a **chat simulator**, not creature AI. The "characters" are in-world
 personas (citizens, adventurers, soldiers) that post into World/Guild via
@@ -32,7 +50,7 @@ Two consequences shape everything below:
   `SendWorldMessage`/`SendBroadcastMessage`, which are display-only and never
   re-enter the chat hooks. Real chat in → in-world reply out, one direction.
 
-## Goals (from the clarified scope)
+#### Goals (from the clarified scope)
 
 1. **Keyword + fuzzy matching** of player input into intent categories
    (greeting, farewell, thanks, laugh, lost/directions, lore-question, taunt).
@@ -51,7 +69,7 @@ Two consequences shape everything below:
    faction response pool. Optional cross-faction *in-character heckling* behind a
    flag (an enemy soldier muttering across neutral ground, never modern meta).
 
-## Current architecture (what we build on)
+#### Current architecture (what we build on)
 
 `ActiveChat/npcTalk.lua` (single script, `if enableScript then … end`):
 
@@ -79,7 +97,7 @@ All the hard parts (faction names, formatting, placeholders, chain rendering)
 already exist. The new work is mostly **input handling + scheduling**, reusing
 these helpers.
 
-## Files
+#### Files
 
 | File | Change |
 |---|---|
@@ -99,7 +117,7 @@ these helpers.
 > is module-level and already read at the top of `speak()`. See CONTEXT_AWARE_PLAN.md
 > "Tie-in: Player Interaction plan".
 
-## Data model: `npc_reactions.lua`
+#### Part A — Data model: `npc_reactions.lua`
 
 Author it the same way as the existing files (strings = one-liners, tables of
 strings = exchanges) so contributors already know the format. Add one new entry
@@ -153,7 +171,7 @@ Entry shapes, unified:
 Placeholders (`%zone%` etc.) work everywhere because all output passes through
 the existing substitution step.
 
-## Matching: normalize + fuzzy classify
+#### Part B — Matching: normalize + fuzzy classify
 
 New pure functions (unit-testable offline, no game state):
 
@@ -192,7 +210,7 @@ keywords = {
 (Note: trade/LFG shorthand like `wts`/`wtb`/`lf` is intentionally **not** matched
 — that's player-imitation behavior this module no longer simulates.)
 
-## Chat hooks
+#### Part C — Chat hooks
 
 Register the relevant Eluna player chat events (verify the numeric IDs against
 your mod-eluna build; canonical values shown):
@@ -232,7 +250,7 @@ normally; we only *add* a reply. `channelOf` decides whether to answer through
 `formatWorld` vs `formatGuild` based on `Type`/which hook fired, so the reply
 lands in the channel the player used.
 
-## Response scheduling
+#### Part D — Response scheduling
 
 A reply that appears instantly reads as a bot. Use one-shot timers so it feels
 like a person taking a moment to answer:
@@ -265,7 +283,7 @@ In multiplayer you may instead broadcast to all same-faction players via
 `GetPlayersInWorld(team)`; default to replying to the triggering player only,
 which is correct for the single-player target audience.
 
-## Per-player state
+#### Part E — Per-player state
 
 ```lua
 local pstate = {}   -- [guidLow] = { lastReply=ms, thread=nil|{expect,expires} }
@@ -280,7 +298,7 @@ local pstate = {}   -- [guidLow] = { lastReply=ms, thread=nil|{expect,expires} }
   `pstate[guid] = nil`. Optional lazy sweep of expired threads on each inbound
   message to bound memory.
 
-## Faction logic
+#### Part F — Faction logic
 
 `team = player:GetTeam()` → `0 = Alliance`, `1 = Horde` → pool key
 `"alliance"`/`"horde"`. Reply pool selection per category:
@@ -292,7 +310,7 @@ local pstate = {}   -- [guidLow] = { lastReply=ms, thread=nil|{expect,expires} }
   uses the **opposite** faction's name pool so the heckler reads as the enemy.
   Keep these lines in-character (a sneering enemy soldier), never modern trash-talk.
 
-## Config additions (top of `npcTalk.lua`)
+#### Part G — Config
 
 ```lua
 local enablePlayerInteraction  = true
@@ -305,7 +323,7 @@ local threadTimeout            = 30000       -- ms, character<->player follow-up
 local replyToFactionRoom       = false       -- false=reply to player only; true=whole faction
 ```
 
-## Edge cases / correctness checklist
+#### Edge cases / correctness checklist
 
 - Ignore messages starting with `.` (GM commands) and empty/normalized-too-short input.
 - No recursion — replies use `Send*Message`, never real chat. (Verify by confirming the hook does not fire on our own output.)
@@ -318,7 +336,7 @@ local replyToFactionRoom       = false       -- false=reply to player only; true
 - Reuse `twoNames` for distinct A/B so a player-sparked burst doesn't read as one persona talking to itself.
 - **In-character guard:** every reaction line stays inside the fiction. No real-world references, no meta, no LFG/trade transactional content. This is the whole point of the pivot — don't reintroduce player imitation through the reaction content.
 
-## Phased implementation
+#### Build order
 
 1. **Utilities** — `normalize`, `levenshtein`, `classify`, `substitute`
    (extract placeholder substitution out of `t.dt` so replies can reuse it).
@@ -335,7 +353,7 @@ local replyToFactionRoom       = false       -- false=reply to player only; true
 7. **README** — document flags, the `npc_reactions.lua` authoring format, and the
    in-character rule.
 
-## Verification
+#### Verification
 
 - **Syntax/load:** `luac -p` (or `load`) every touched file; run the offline
   harness asserting `classify("Helloooo!")=="greeting"`, `classify("thsnks")=="thanks"`,
@@ -352,7 +370,7 @@ local replyToFactionRoom       = false       -- false=reply to player only; true
   post, it doesn't ship.
 - **Regression:** confirm ambient World/Guild timers still fire unchanged.
 
-## Open decisions for you
+#### Open decisions
 
 - **Reply audience** when more than one player is online: triggering player only
   (default) vs. whole faction. Single-player target says "player only".

@@ -1,28 +1,49 @@
 # Plan: Zone-Aware Chatter for ActiveChat
 
-> Status: **planned**. Builds on the shipped character system (`CHARACTERS_PLAN.md`)
-> and context engine (`CONTEXT_AWARE_PLAN.md`). This is the largest of the open
-> extensions because it reworks both **delivery** (who sees a line) and the **timer
-> architecture** (what drives a tick). Land it after the smaller extensions.
+> **Scope note.** Make World chatter *regional* instead of a single global megaphone:
+> players in different zones see different characters and lines, hear voices biased
+> toward their location, and get per-area cadence (a city is chatty, the wilds sparse,
+> a battlefield bursty). This reworks both **delivery** (who sees a line) and the
+> **timer architecture** (what drives a tick) — the largest of the open extensions, so
+> land it after the smaller ones. Builds on the shipped character system
+> (`CHARACTERS_PLAN.md`) and context engine (`CONTEXT_AWARE_PLAN.md`).
 
-## Why (the gap today)
+## Relevant docs
 
-World chat is global. `emit(audience, msg)` either calls `SendWorldMessage` (everyone)
-or loops `GetPlayersInWorld(team)` and `SendBroadcastMessage`s the *whole* team — so
-every online player sees the same speaker say the same line regardless of where they
-are. A character has an `area` affinity (`city`/`rural`/…) and a `homeCity`, but
-nothing keys chatter to the *listener's* location. We want:
+- docs/context.md
+- CHARACTERS_PLAN.md (home zone extends the character model)
+- CONTEXT_AWARE_PLAN.md (reuses `ctx.area` and the nil-safe map discipline)
+- CONVERSATION_PACING_PLAN.md (conversation state must key by delivery group)
 
-1. **Zone-localized delivery** — players in different zones see *different* characters
-   and lines, so the world feels regional rather than one global megaphone.
-2. **Proximity bias** — a player is likelier to hear a character whose home
-   zone/region is near them, and likelier to hear chatter *about* a city they're near.
-3. **Per-area timers** — independent cadence for `city` / `rural` / `battlefield`
-   ambience (a city is busy and chatty; the wilds are sparse; a battlefield is bursty),
-   replacing the current per-faction (`alliance` / `horde` / `shared`) timer split,
-   which is no longer needed — faction becomes a per-delivery gate, not a timer axis.
+## Completed
 
-## Current architecture (what we change)
+- None yet — all phases below are planned.
+
+---
+
+## Phases (planned)
+
+### **Phase 1 — Per-zone delivery + per-area timers**
+
+#### Note
+
+> **Problem (the gap today).** World chat is global. `emit(audience, msg)` either calls
+> `SendWorldMessage` (everyone) or loops `GetPlayersInWorld(team)` and
+> `SendBroadcastMessage`s the *whole* team — so every online player sees the same
+> speaker say the same line regardless of where they are. A character has an `area`
+> affinity (`city`/`rural`/…) and a `homeCity`, but nothing keys chatter to the
+> *listener's* location. We want:
+>
+> 1. **Zone-localized delivery** — players in different zones see *different* characters
+>    and lines, so the world feels regional rather than one global megaphone.
+> 2. **Proximity bias** — a player is likelier to hear a character whose home
+>    zone/region is near them, and likelier to hear chatter *about* a city they're near.
+> 3. **Per-area timers** — independent cadence for `city` / `rural` / `battlefield`
+>    ambience (a city is busy and chatty; the wilds are sparse; a battlefield is bursty),
+>    replacing the current per-faction (`alliance` / `horde` / `shared`) timer split,
+>    which is no longer needed — faction becomes a per-delivery gate, not a timer axis.
+
+**Current architecture (what we change).**
 
 - **Timers** (`npcTalk.lua` bottom): `alliance`-driver on `talk_time` carrying
   `shared`+`alliance`; `horde`-driver on `faction_talk_time` carrying `horde`. Faction
@@ -33,7 +54,14 @@ nothing keys chatter to the *listener's* location. We want:
 - **`cityFor(speaker)`** biases `%city%` to the *speaker's* home city; the listener's
   location is never consulted.
 
-## New data: zone classification maps (`context_map.lua`)
+#### Dependencies & order
+
+Largest extension; land after the smaller ones. Conversation chains must stay within
+**one** delivery group, so coordinate with `CONVERSATION_PACING_PLAN.md` — per-channel
+conversation state must be keyed by zone bucket, not just faction, once delivery is
+per-zone. See `TODO.md` for cross-plan ordering.
+
+#### Part A — Zone classification maps (`context_map.lua`)
 
 Zone tables belong with the other tuning maps. Add three, keyed off the existing
 `zones`/`cities` vocabulary and the AzerothCore zone IDs ALE exposes via
@@ -57,7 +85,7 @@ Use **zone IDs** as keys (stable, locale-independent) with a name fallback. Prov
 default `"city"`/`"rural"` so an unmapped zone is never a hard error — same nil-safe
 discipline as `eventIdToName`.
 
-## Character gets a home zone/region
+#### Part B — Character home zone/region
 
 Extend `generateCharacter`: assign `homeZone` (and derive `homeRegion` via
 `zoneToRegion`) biased by faction + role, the same way `homeCity` and `area` are
@@ -65,7 +93,7 @@ biased today. `homeCity` stays (it's the capital); `homeZone` is the finer-grain
 origin used for proximity. The existing `area` field still drives line eligibility;
 `homeZone`/`homeRegion` drive *who gets delivered to whom*.
 
-## Delivery model: per-zone emission
+#### Part C — Delivery model: per-zone emission
 
 The core shift: a tick no longer means "one speaker → everyone." It means **for each
 populated zone, resolve a speaker and a line appropriate to that zone, and deliver only
@@ -105,7 +133,7 @@ For a small realm this is fine; gate the whole feature behind `enableZoneChat` a
 the legacy global `emit` path when it's off. Cap work by only iterating *populated*
 zones (skip empties) and reusing one rendered string per (zone, faction) group.
 
-## Timer architecture: per-area, not per-faction
+#### Part D — Timer architecture: per-area, not per-faction
 
 Replace the two faction-drivers with **area-driver timers**, each with its own cadence
 pair so density differs by locale:
@@ -130,7 +158,7 @@ CreateLuaEvent(function() tickArea("battlefield") end, {battlefieldTalkTime[1], 
 - Keep `enableZoneChat=false` → fall back to the **current** two-faction timers + global
   `emit` unchanged, so this is a clean opt-in and an easy A/B.
 
-## Config additions (top of `npcTalk.lua`)
+#### Part E — Config
 
 ```lua
 local enableZoneChat       = true
@@ -141,7 +169,7 @@ local proximityStrength    = 3.0    -- home-zone/region speaker boost; 1 = off
 local cityTopicBias        = true   -- bias %city% toward listener's nearest capital
 ```
 
-## Phased implementation
+#### Build order
 
 1. **Data maps** — add `zoneToArea` / `zoneToRegion` / `zoneToNearestCity` to
    `context_map.lua` (IDs + name fallback) with safe defaults; unit-check every
@@ -156,7 +184,7 @@ local cityTopicBias        = true   -- bias %city% toward listener's nearest cap
    `enableZoneChat`); retire the legacy second-driver branch on that path.
 6. **README + manifest** — document the new model, the maps, and the cadence knobs.
 
-## Edge cases / correctness checklist
+#### Edge cases / correctness checklist
 
 - Unmapped zone → default area + no proximity boost; never errors.
 - Zero players in an area-type → skip silently (no cursor churn), as today.
@@ -170,7 +198,7 @@ local cityTopicBias        = true   -- bias %city% toward listener's nearest cap
   Coordinate with `CONVERSATION_PACING_PLAN.md` (per-channel conversation state must be
   keyed by zone bucket, not just faction, once delivery is per-zone).
 
-## Verification
+#### Verification
 
 - `_luacheck.py` on touched files; a map-coverage check (every `zones`/`cities` entry
   is classified).
