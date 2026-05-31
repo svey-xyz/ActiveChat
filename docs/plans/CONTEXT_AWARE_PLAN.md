@@ -4,7 +4,11 @@
 > now*. Night lines fire at night, festival lines fire during the actual festival, and
 > season talk tracks the real game state instead of a coin flip.
 
-## Implementation status
+## Relevant docs
+
+- docs/context.md
+
+## Completed
 
 - **Phase 1 — DONE (2026-05-30).** `ctx` + refresh, time only.
 - **Phase 2 — DONE (2026-05-30).** `timeFactor` in the scorer + `times` tag.
@@ -21,16 +25,26 @@
 
 ---
 
-## Extensions (planned)
+## Phases (planned)
+
+### **Phase 8**
+
+#### Note
 
 > Added after context-aware *line selection* shipped. Two related upgrades to the
 > **token value pools** (the `local foods = {…}` etc. tables and their
 > `selectRandomX` helpers in `npcTalk.lua`). Today line *eligibility* is
 > context-aware, but the value a `%token%` resolves to is still a flat uniform random
-> pick. Both extensions below change how a token *value* is chosen — they do not
+> pick. Both parts below change how a token *value* is chosen — they do not
 > touch the scorer.
 
-## Extension D — Context-aware token values
+#### Dependencies & order
+
+A and B share the token-pool reshape — do them in one pass (**E's bare-noun rule
+first, then D's tags on the cleaned values**). Both are independent of the
+CHARACTERS_PLAN extensions and the zone work. See `TODO.md` for cross-plan ordering.
+
+#### Part A — Context-aware token values
 
 **Problem.** `%food%` in a morning line can resolve to *"a meat pie"*; `%food%` at a
 festival ignores the festival. The token pools are flat lists picked uniformly by
@@ -75,11 +89,11 @@ weather, activity, maybe critter). Leave abstract pools (item, boss, spell, gem)
 untagged — over-tagging just adds noise. This mirrors the README's standing rule for
 lines: *tag only when the content implies a context.*
 
-**Interaction with Extension E.** A tagged food entry still carries its leading
+**Interaction with Part B.** A tagged food entry still carries its leading
 article per the grammar rule below (`"a meat pie"`, `"eggs and bacon"`), so the two
-extensions share the same pool reshape — do them together.
+parts share the same pool reshape — do them together.
 
-## Extension E — Article / grammar consistency rule for tokens
+#### Part B — Article / grammar consistency rule for tokens
 
 **Problem.** Some pool values bake in a leading article and some don't, with no rule,
 so chatter grammar is inconsistent depending on which value is drawn:
@@ -117,7 +131,7 @@ pie"* vs *"the ale"*) and only the sentence knows which fits.
    article — author them as `%companion%` bare, or split into a proper-name sub-pool
    so the `%a…%` token never prepends an article to a name.
 
-**Tie to Extension D.** Both reshape the same pools, so land the article cleanup in the
+**Tie to Part A.** Both reshape the same pools, so land the article cleanup in the
 same pass as the context tags. After the change, audit the chatter file for `%food%` /
 `%drink%` / `%critter%` / `%companion%` usages and fix any that assumed a baked-in
 article (now they should read `%afood%` or `some %food%` as appropriate). The
@@ -127,8 +141,4 @@ article (now they should read `%afood%` or `some %food%` as appropriate). The
 article-bearing token in context and flags double-articles (*"a a meat pie"*),
 missing articles (*"I ate meat pie"*), or *a/an* mismatches (*"a apple"*).
 
-## Dependencies & order
 
-D and E share the token-pool reshape — do them in one pass (**E's bare-noun rule
-first, then D's tags on the cleaned values**). Both are independent of the
-CHARACTERS_PLAN extensions and the zone work. See `TODO.md` for cross-plan ordering.
