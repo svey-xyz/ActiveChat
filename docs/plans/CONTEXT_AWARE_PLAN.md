@@ -1,5 +1,9 @@
 # Plan: Context-Aware Chatter for ActiveChat
 
+> **Scope note.** By default the chatter doesn't just read like Azeroth — it reads like Azeroth *right
+> now*. Night lines fire at night, festival lines fire during the actual festival, and
+> season talk tracks the real game state instead of a coin flip.
+
 ## Implementation status
 
 - **Phase 1 — DONE (2026-05-30).** `ctx` + refresh, time only.
@@ -15,7 +19,9 @@
 - **Phase 7 — DONE (2026-05-30), documentation.** README only — no engine/content
   change.
 
-# Extensions (planned)
+---
+
+## Extensions (planned)
 
 > Added after context-aware *line selection* shipped. Two related upgrades to the
 > **token value pools** (the `local foods = {…}` etc. tables and their
