@@ -29,6 +29,10 @@ day, season, and active in-game holidays.
   budget. To understand its shape, read `talk_text/npc_text.manifest.md` instead.
 - **Do not read anything under `docs/`** unless the user explicitly points you there.
   The design rationale you'll usually need is already inline in `npcTalk.lua`.
+- **When working from a plan file, do not load finished phases into context.** Every
+  plan file carries a compact summary of completed phases at the top — read that, then
+  jump straight to the phase being worked on. Keep that summary up to date as phases
+  complete (and follow the "remove plans after implementation" rule below).
 
 ## The chatter file — working without loading it
 
@@ -96,8 +100,12 @@ After chatter edits, also confirm no orphan tokens (every `%token%` in the chatt
 handled by `renderTokens`, and vice-versa) — `gen_manifest.py` surfaces the token
 list for this check.
 
+Always update relevant docs after any edits.
+
 ## Style
 
 When editing comments, keep them compact: explain *why* (non-obvious rationale,
 invariants), not *what* the next line plainly does. Avoid restating code, and avoid
 references to internal phase/plan numbers — they age badly and add noise.
+
+Remove plans after they have been implemented leaving a very compact note in place.

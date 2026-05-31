@@ -1,0 +1,182 @@
+# Plan: Zone-Aware Chatter for ActiveChat
+
+> Status: **planned**. Builds on the shipped character system (`CHARACTERS_PLAN.md`)
+> and context engine (`CONTEXT_AWARE_PLAN.md`). This is the largest of the open
+> extensions because it reworks both **delivery** (who sees a line) and the **timer
+> architecture** (what drives a tick). Land it after the smaller extensions.
+
+## Why (the gap today)
+
+World chat is global. `emit(audience, msg)` either calls `SendWorldMessage` (everyone)
+or loops `GetPlayersInWorld(team)` and `SendBroadcastMessage`s the *whole* team — so
+every online player sees the same speaker say the same line regardless of where they
+are. A character has an `area` affinity (`city`/`rural`/…) and a `homeCity`, but
+nothing keys chatter to the *listener's* location. We want:
+
+1. **Zone-localized delivery** — players in different zones see *different* characters
+   and lines, so the world feels regional rather than one global megaphone.
+2. **Proximity bias** — a player is likelier to hear a character whose home
+   zone/region is near them, and likelier to hear chatter *about* a city they're near.
+3. **Per-area timers** — independent cadence for `city` / `rural` / `battlefield`
+   ambience (a city is busy and chatty; the wilds are sparse; a battlefield is bursty),
+   replacing the current per-faction (`alliance` / `horde` / `shared`) timer split,
+   which is no longer needed — faction becomes a per-delivery gate, not a timer axis.
+
+## Current architecture (what we change)
+
+- **Timers** (`npcTalk.lua` bottom): `alliance`-driver on `talk_time` carrying
+  `shared`+`alliance`; `horde`-driver on `faction_talk_time` carrying `horde`. Faction
+  is the timer axis.
+- **`emit`** routes by the line's `audience` tag to world/team broadcast. No zone
+  filter.
+- **Character** carries `area` + `homeCity` but no zone/region.
+- **`cityFor(speaker)`** biases `%city%` to the *speaker's* home city; the listener's
+  location is never consulted.
+
+## New data: zone classification maps (`context_map.lua`)
+
+Zone tables belong with the other tuning maps. Add three, keyed off the existing
+`zones`/`cities` vocabulary and the AzerothCore zone IDs ALE exposes via
+`player:GetZoneId()`:
+
+```lua
+-- zone display name (or zone id) -> AREA bucket (one of AREAS)
+M.zoneToArea = { ["Stormwind"]="city", ["Elwynn Forest"]="rural",
+                 ["Wintergrasp"]="battlefield", ["Tanaris"]="wilderness", … }
+
+-- zone -> region grouping, for proximity ("near their hometown / region")
+M.zoneToRegion = { ["Elwynn Forest"]="elwynn", ["Westfall"]="elwynn",
+                   ["Redridge Mountains"]="elwynn", ["Durotar"]="durotar", … }
+
+-- zone -> nearest capital, for "chatter about a city you're close to"
+M.zoneToNearestCity = { ["Elwynn Forest"]="Stormwind", ["Westfall"]="Stormwind",
+                        ["Durotar"]="Orgrimmar", … }
+```
+
+Use **zone IDs** as keys (stable, locale-independent) with a name fallback. Provide a
+default `"city"`/`"rural"` so an unmapped zone is never a hard error — same nil-safe
+discipline as `eventIdToName`.
+
+## Character gets a home zone/region
+
+Extend `generateCharacter`: assign `homeZone` (and derive `homeRegion` via
+`zoneToRegion`) biased by faction + role, the same way `homeCity` and `area` are
+biased today. `homeCity` stays (it's the capital); `homeZone` is the finer-grained
+origin used for proximity. The existing `area` field still drives line eligibility;
+`homeZone`/`homeRegion` drive *who gets delivered to whom*.
+
+## Delivery model: per-zone emission
+
+The core shift: a tick no longer means "one speaker → everyone." It means **for each
+populated zone, resolve a speaker and a line appropriate to that zone, and deliver only
+to the players there.**
+
+```
+tickArea(areaType):                      -- areaType ∈ {"city","rural","battlefield"}
+  players = GetPlayersInWorld()          -- all online
+  if none -> return                      -- keep the existing "no listeners, skip" guard
+  buckets = group players by GetZoneId() where zoneToArea[zone] == areaType
+  for each (zone, playersInZone) in buckets:
+      region = zoneToRegion[zone]
+      team   = faction majority/serverside of that zone (or per-player on send)
+      -- pick a speaker biased toward this zone/region:
+      speaker = resolveSpeaker(faction) with a proximity weight:
+                  chattiness × proximityFactor(char, zone, region)
+      item    = pickLine(candidatesFor(faction), speaker, tick) with ctx.area = areaType
+      deliver rendered line to playersInZone via SendBroadcastMessage
+```
+
+- **`proximityFactor(char, zone, region)`** — boost when `char.homeZone == zone`,
+  smaller boost when `char.homeRegion == region`, neutral otherwise. A new
+  `proximityStrength` config (like `areaMatchStrength`) tunes it; `1` disables (global
+  behavior). This realizes "more likely to hear a character near their hometown."
+- **City-topic bias** — `cityFor()` gains a listener-aware mode: when delivering to a
+  zone, bias `%city%` toward `zoneToNearestCity[zone]` (so players near Stormwind hear
+  Stormwind chatter), falling back to the speaker's `homeCity`, then random. Thread the
+  delivery zone into the render path (`speak`/`renderTokens`) so the resolver can see
+  it. This realizes "more likely to hear chatter regarding a city you're close to."
+- **Faction gating** stays: a zone's deliverable players are split by `GetTeam()` on
+  send, or the speaker's faction is chosen to match the zone's controlling faction;
+  `shared`-origin lines deliver to both. The `audience` tag still exists but is now
+  resolved *per delivery group*, not per global broadcast.
+
+**Cost note.** Per-zone, per-player `SendBroadcastMessage` scales with player count.
+For a small realm this is fine; gate the whole feature behind `enableZoneChat` and keep
+the legacy global `emit` path when it's off. Cap work by only iterating *populated*
+zones (skip empties) and reusing one rendered string per (zone, faction) group.
+
+## Timer architecture: per-area, not per-faction
+
+Replace the two faction-drivers with **area-driver timers**, each with its own cadence
+pair so density differs by locale:
+
+```lua
+-- new config (replaces talk_time / faction_talk_time as the timer axis)
+local cityTalkTime        = {4000, 12000}   -- busy: frequent
+local ruralTalkTime       = {15000, 45000}  -- sparse: occasional
+local battlefieldTalkTime = {6000, 18000}   -- bursty when contested
+
+CreateLuaEvent(function() tickArea("city")        end, {cityTalkTime[1],        cityTalkTime[2]},        0)
+CreateLuaEvent(function() tickArea("rural")       end, {ruralTalkTime[1],       ruralTalkTime[2]},       0)
+CreateLuaEvent(function() tickArea("battlefield") end, {battlefieldTalkTime[1], battlefieldTalkTime[2]}, 0)
+```
+
+- Faction is **no longer a timer**. Each `tickArea` handles both factions by bucketing
+  players and matching speaker faction per bucket. This removes the
+  "alliance-also-carries-shared" coupling and the legacy second-driver branch.
+- The other `AREAS` (`coast`/`wilderness`/`road`) either fold into the nearest of the
+  three timers via `zoneToArea` (e.g. coast→rural) or get their own timer later. Start
+  with three; the mapping table makes adding a fourth a data change.
+- Keep `enableZoneChat=false` → fall back to the **current** two-faction timers + global
+  `emit` unchanged, so this is a clean opt-in and an easy A/B.
+
+## Config additions (top of `npcTalk.lua`)
+
+```lua
+local enableZoneChat       = true
+local cityTalkTime         = {4000, 12000}
+local ruralTalkTime        = {15000, 45000}
+local battlefieldTalkTime  = {6000, 18000}
+local proximityStrength    = 3.0    -- home-zone/region speaker boost; 1 = off
+local cityTopicBias        = true   -- bias %city% toward listener's nearest capital
+```
+
+## Phased implementation
+
+1. **Data maps** — add `zoneToArea` / `zoneToRegion` / `zoneToNearestCity` to
+   `context_map.lua` (IDs + name fallback) with safe defaults; unit-check every
+   `zones`/`cities` entry resolves.
+2. **Character home zone** — add `homeZone`/`homeRegion` to `generateCharacter`
+   (faction/role biased); leave `area`/`homeCity` untouched.
+3. **Proximity + city-topic** — add `proximityFactor`, thread delivery-zone into the
+   speaker pick and `cityFor`; behind `proximityStrength`/`cityTopicBias`.
+4. **Per-zone delivery** — implement `tickArea` and per-zone bucketed delivery behind
+   `enableZoneChat`; keep legacy `emit` for the off path.
+5. **Per-area timers** — swap the faction-drivers for the three area-drivers (only when
+   `enableZoneChat`); retire the legacy second-driver branch on that path.
+6. **README + manifest** — document the new model, the maps, and the cadence knobs.
+
+## Edge cases / correctness checklist
+
+- Unmapped zone → default area + no proximity boost; never errors.
+- Zero players in an area-type → skip silently (no cursor churn), as today.
+- A character with no `homeZone` (pre-existing/edge) → `proximityFactor` returns 1.0.
+- `enableZoneChat=false` → byte-for-byte the current global behavior (regression-test
+  this path stays intact).
+- Player count scaling — confirm one rendered string is reused per (zone, faction)
+  group, not re-rendered per player; cap or sample if a zone holds very many players.
+- Conversation chains (duos/groups) must stay within **one** delivery group — a chain
+  started for a zone bucket should finish for that same bucket, not leak across zones.
+  Coordinate with `CONVERSATION_PACING_PLAN.md` (per-channel conversation state must be
+  keyed by zone bucket, not just faction, once delivery is per-zone).
+
+## Verification
+
+- `_luacheck.py` on touched files; a map-coverage check (every `zones`/`cities` entry
+  is classified).
+- Offline: `proximityFactor` returns the expected ordering (home-zone > home-region >
+  elsewhere) and `cityFor` picks the nearest capital for a sample of zones.
+- In-game matrix: two players in different zones see different speakers/lines; a player
+  in Elwynn hears Stormwind-flavored `%city%`; a battlefield zone fires on the bursty
+  cadence; `enableZoneChat=false` reproduces the old global chatter; log a player out
+  mid-tick (no orphan send).
