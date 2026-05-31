@@ -203,7 +203,7 @@ return {
       -- Farmers & rural folk
       { "Frost spared the %season% crop this year. I'll not say it loud, but I had a quiet word of thanks with the Earth Mother all the same.", roles={"farmer"}, moods={"weary","kindly"}, areas={rural=3} },
       { "A %monster% came out the treeline and took two of my hens. Set the dogs and a lantern. It'll think twice tomorrow.", roles={"farmer"}, moods={"brave","gruff"}, areas={rural=2, wilderness=1} },
-      { "Hauling %tradegood% to market down the %route% before dawn. Pray the bridge still stands after that %weather%.", roles={"farmer"}, moods={"weary","nervous"}, areas={road=2, rural=1} },
+      { "Hauling %tradegood% to market down the %route% before dawn. Pray the bridge still stands after that %weather%.", roles={"farmer"}, moods={"weary","nervous"}, areas={road=2, rural=1}, times={dawn=3, morning=1} },
       { "The miller's thumb is on the scale again, same as his father's was. Some %profession% are just inherited sins.", roles={"farmer"}, moods={"bitter","wry"}, areas={"rural"} },
       -- Sailors & the coast
       { "Tide's right and the wind's kind. We make for %zone% on the turn, and I'll not hear a word about the %weather%.", roles={"sailor"}, moods={"brave","gruff"}, areas={coast=3} },
@@ -220,7 +220,7 @@ return {
       { "I've fought %boss%, I've sailed past %zone%, I've kissed a %race% princess. Believe what you like. The %drink%'s real, that's enough.", roles={"drunkard"}, moods={"boastful","wry"}, areas={"city"} },
       -- Citizens, weather, ambience (lighter tags)
       { "The criers say %weather%'s coming off the mountains by %timeofday%. The washing's already in. We learn fast in this %city%.", roles={"citizen"}, moods={"wry"}, areas={"city"} },
-      { "Watched the lamplighters race the dusk down the long street. The %city%'s at its softest in that grey hour.", roles={"citizen"}, moods={"dreamy"}, areas={"city"} },
+      { "Watched the lamplighters race the dusk down the long street. The %city%'s at its softest in that grey hour.", roles={"citizen"}, moods={"dreamy"}, areas={"city"}, times={"dusk"} },
       { "Every %season% the same swallows nest over the smithy. The blacksmith pretends to mind. He's named them, the old softie.", roles={"citizen"}, moods={"warm","wry"}, areas={"city"} },
       { "Heard a %class% telling children about %boss% in the square. Half of it was lies. All of it was wonderful.", roles={"citizen"}, moods={"warm","dreamy"}, areas={"city"} },
       { "A traveling %profession% set up by the well selling charms against %monster% attacks. We've no %monster% for fifty leagues. Selling well, though.", roles={"citizen"}, moods={"wry"}, areas={rural=2, road=1} },
@@ -235,7 +235,7 @@ return {
       { "Tavern's out of the good ale already. It's not even noon. Rough crowd today.", roles={"innkeeper","drunkard"}, areas={"city","rural"} },
       "Someone painted a mustache on the founder's statue overnight. The guards are 'investigating' between laughs.",
       { "A traveling merchant set up by the fountain selling 'genuine artifacts.' They're rocks. Nice rocks, though.", roles={"vendor"}, moods={"wry"}, areas={"city"} },
-      { "The lamplighters are making their rounds. Dusk in the city always feels like a held breath.", moods={"dreamy"}, areas={"city"} },
+      { "The lamplighters are making their rounds. Dusk in the city always feels like a held breath.", moods={"dreamy"}, areas={"city"}, times={"dusk"} },
       { "Heard two nobles arguing over who has the bigger estate. Neither noticed the pickpocket between them.", roles={"noble","urchin"}, moods={"gossipy"}, areas={"city"} },
       { "Beggar by the gate has better stories than most adventurers. Spare him a copper if you pass.", roles={"urchin"}, moods={"kindly"}, areas={"city"} },
       { "The city criers have the same news as yesterday. Slow week for villainy, apparently.", roles={"citizen"}, moods={"wry"}, areas={"city"} },
@@ -290,18 +290,34 @@ return {
       { "They say there's a door in the canals that wasn't there last week. Nobody's opened it. Yet.", moods={"gossipy","nervous"}, areas={"city"} },
       { "Rumor of a secret tavern beneath the city that only serves those who know the password. I do not know the password.", moods={"gossipy","wry"}, areas={"city"} },
       { "Someone's leaving fresh flowers at the unmarked grave in the cemetery every dawn. No one's caught them.", moods={"solemn","dreamy"}, areas={"city"}, cooldown=20 },
-      -- Festivals & holidays
-      "Brewfest decorations are going up in the cities already. My liver is filing a formal complaint.",
-      "The Darkmoon Faire's back. I've already lost my month's gold to a goblin and a ring toss.",
-      "Hallow's End bonfire in the square tonight. Bring a costume, leave with candy and a headache.",
-      "Winter Veil lights are up across the city. Greatfather Winter had better bring me that mount this year.",
-      "Lunar Festival fireworks over the city. The elders are handing out Coins of Ancestry. Grab a fistful.",
-      "Pilgrim's Bounty feast in the city square. The tables go on forever. So does the line.",
-      "Love is in the Air and the city's drowning in pink. I've been handed nine perfumes and zero proposals.",
-      "Children's Week. The orphans are touring the city and every single one waved at me. My heart.",
-      "Midsummer flames lit in every capital tonight. Dancing till dawn, win or lose the bonfire war.",
-      "Noblegarden eggs hidden all over the city and grown adults are SPRINTING for them. No shame. None.",
-      "Day of the Dead shrines went up in the cemetery. Marigolds everywhere. The dead are remembered well here.",
+      -- Festivals & holidays. These name a SPECIFIC holiday, so they carry an
+      -- `events` tag (Phase 3): the line fires ONLY while that game_event is
+      -- live, and a hard-exclude when it isn't (CONTEXT_AWARE_PLAN.md). Display
+      -- names match context_map.lua's eventId->name map exactly.
+      { "Brewfest decorations are going up in the cities already. My liver is filing a formal complaint.", events={"Brewfest"} },
+      { "The Darkmoon Faire's back. I've already lost my month's gold to a goblin and a ring toss.", events={"the Darkmoon Faire"} },
+      { "Hallow's End bonfire in the square tonight. Bring a costume, leave with candy and a headache.", events={"Hallow's End"} },
+      { "Winter Veil lights are up across the city. Greatfather Winter had better bring me that mount this year.", events={"Winter Veil"} },
+      { "Lunar Festival fireworks over the city. The elders are handing out Coins of Ancestry. Grab a fistful.", events={"the Lunar Festival"} },
+      { "Pilgrim's Bounty feast in the city square. The tables go on forever. So does the line.", events={"Pilgrim's Bounty"} },
+      { "Love is in the Air and the city's drowning in pink. I've been handed nine perfumes and zero proposals.", events={"Love is in the Air"} },
+      { "Children's Week. The orphans are touring the city and every single one waved at me. My heart.", events={"Children's Week"} },
+      { "Midsummer flames lit in every capital tonight. Dancing till dawn, win or lose the bonfire war.", events={"the Midsummer Fire Festival"} },
+      { "Noblegarden eggs hidden all over the city and grown adults are SPRINTING for them. No shame. None.", events={"Noblegarden"} },
+      { "Day of the Dead shrines went up in the cemetery. Marigolds everywhere. The dead are remembered well here.", events={"the Day of the Dead"} },
+      -- Anticipation / aftermath (Phase 4). `eventWindow="approach"` lets a line
+      -- fire in the N-day run-up to its event (keyed to ctx.nextEvent, paired with
+      -- %nextevent%); `eventWindow="after"` fires in the N-day wind-down (keyed to
+      -- ctx.lastEvent, paired with %lastevent%). Display names match
+      -- context_map.lua exactly.
+      { "Only a few days until %nextevent% -- have you hung the holly yet? The shops are already out of ribbon.",
+        events={"Winter Veil"}, eventWindow="approach" },
+      { "Folk are stocking up before %nextevent%. Best buy your candles now, the prices double once it starts.",
+        events={"Hallow's End"}, eventWindow="approach" },
+      { "Quiet now that %lastevent% is over. The kegs are all dry and the city smells of stale hops.",
+        events={"Brewfest"}, eventWindow="after" },
+      { "Still finding marigold petals in the gutters from %lastevent%. The shrines come down slow.",
+        events={"the Day of the Dead"}, eventWindow="after" },
       -- Faith, the elements, quiet moments
       { "Lit a candle in the Cathedral for a friend who didn't come back from the north. The Light keeps them now.", roles={"priest"}, moods={"solemn"}, areas={"city"} },
       { "Knelt at the moonwell and felt the day's weight lift a little. Elune's mercy is real, whatever you believe.", roles={"priest"}, moods={"solemn","dreamy"} },
@@ -363,7 +379,7 @@ return {
       { "Fresh apples, ripe melons, honeyed dates! Best produce in the city, ask anyone, mostly my cousin!", roles={"vendor"}, moods={"cheerful"}, areas={"city"} },
       { "Sharpening blades by the smithy gate, two copper a sword, keen as a widow's tongue!", roles={"vendor","craftsman"}, moods={"gruff"}, areas={"city"} },
       { "Hot pies! Meat pies, fruit pies, mystery pies! The mystery ones are half price and twice the adventure!", roles={"vendor"}, moods={"cheerful","wry"}, areas={"city"} },
-      { "Candles, lanterns, lamp oil! Don't let the night catch you dark, friends!", roles={"vendor"}, areas={"city"} },
+      { "Candles, lanterns, lamp oil! Don't let the night catch you dark, friends!", roles={"vendor"}, areas={"city"}, times={dusk=3, night=2} },
       { "Bandages and salves, battle-tested! If they didn't work I'd be out of business AND blood!", roles={"vendor"}, moods={"wry"}, areas={"city"} },
       { "Maps! Real maps! Get where you're going before the goblins sell you a fake one!", roles={"vendor"}, moods={"wry"}, areas={"city"} },
       { "Charms and trinkets, lucky every one! Worked for me, and look how I turned out! ...don't look too hard.", roles={"vendor"}, moods={"wry"}, areas={"city"} },
@@ -375,7 +391,7 @@ return {
       { "Pet food, pet toys, pet everything! Spoil the only companion who never asks for a cut of the loot!", roles={"vendor"}, moods={"cheerful"}, areas={"city"} },
       { "Keep it moving by the gates, folks, the caravan needs the road. Plenty of city to stand around in.", roles={"guard"}, moods={"gruff"}, areas={"city"} },
       { "No dueling in the bank line. I don't care who started it. Take it to the ring like civilized warriors.", roles={"guard"}, moods={"gruff"}, areas={"city"} },
-      { "Curfew bell's rung. Honest folk to their beds, the rest of you to wherever you sleep. Move along.", roles={"guard"}, moods={"gruff","weary"}, areas={"city"} },
+      { "Curfew bell's rung. Honest folk to their beds, the rest of you to wherever you sleep. Move along.", roles={"guard"}, moods={"gruff","weary"}, areas={"city"}, times={"night","dusk"} },
       { "Lost a child? Check the fountain. They always end up at the fountain. Every time. Like little homing pigeons.", roles={"guard"}, moods={"wry","warm"}, areas={"city"} },
       { "Mind the wet cobbles by the harbor. Lost a recruit to a comedic slip just this morning. He's fine. His pride isn't.", roles={"guard"}, moods={"wry"}, areas={"coast"} },
       { "Move it along, citizen. Yes, you, admiring the statue for the fortieth time. It'll still be bronze tomorrow.", roles={"guard"}, moods={"gruff","wry"}, areas={"city"} },
@@ -454,11 +470,11 @@ return {
       { "Up before the cockerel, abed after the candles. Farming's no trade for a man who loves his sleep.", roles={"farmer"}, moods={"weary","gruff"}, areas={rural=3} },
       { "Rain's held off three weeks now. Whisper a prayer to whatever you favor, the wheat's gone to dust.", roles={"farmer"}, moods={"nervous","weary"}, areas={rural=3} },
       { "Sheared the flock, sold the wool to a city trader for half what it's worth. City folk rob the country blind.", roles={"farmer"}, moods={"bitter","gruff"}, areas={rural=3, city=1} },
-      { "New lambs this morning, three of them, all on their feet by noon. Light, but it does the heart good.", roles={"farmer"}, moods={"warm","cheerful"}, areas={rural=3} },
-      { "Mill's grinding day and night with the harvest in. You can smell fresh flour clear across the valley.", roles={"farmer","craftsman"}, moods={"warm"}, areas={rural=3} },
+      { "New lambs this morning, three of them, all on their feet by noon. Light, but it does the heart good.", roles={"farmer"}, moods={"warm","cheerful"}, areas={rural=3}, seasons={"spring"} },
+      { "Mill's grinding day and night with the harvest in. You can smell fresh flour clear across the valley.", roles={"farmer","craftsman"}, moods={"warm"}, areas={rural=3}, seasons={"autumn"} },
       { "Sold a fat hog to the inn down the road and bought my girl a ribbon with the coin. Good market day.", roles={"farmer"}, moods={"warm","cheerful"}, areas={rural=3, road=1} },
       { "Wolf took two ewes off the high pasture last night. I'll sit up with a bow tonight, see if he's bold enough to return.", roles={"farmer"}, moods={"brave","gruff"}, areas={rural=3, wilderness=1} },
-      { "Whole village turns out for the harvest. Hard work, but there's ale and a fiddle when the last sheaf's in.", roles={"farmer","citizen"}, moods={"warm","cheerful"}, areas={rural=3} },
+      { "Whole village turns out for the harvest. Hard work, but there's ale and a fiddle when the last sheaf's in.", roles={"farmer","citizen"}, moods={"warm","cheerful"}, areas={rural=3}, seasons={"autumn"} },
       { "Tax collector came round for the King's share. Took the fattest goose and called it our duty. Duty's expensive.", roles={"farmer"}, moods={"bitter","wry"}, areas={rural=3} },
       { "Apples are coming in red and sweet. Press the windfalls for cider and you'll thank me come %season%.", roles={"farmer"}, moods={"cheerful","warm"}, areas={rural=3} },
       { "Fixed the fence, patched the roof, mended the gate. A farm's a list of small wars you never quite win.", roles={"farmer","craftsman"}, moods={"weary","wry"}, areas={rural=3} },
@@ -468,7 +484,7 @@ return {
       -- == Battlefield, war-camp & siege (expansion, faction-neutral) ==
       { "Quiet on the line tonight. Quiet's worse than the fighting. You start hearing things in the dark.", roles={"soldier"}, moods={"nervous","weary"}, areas={battlefield=3} },
       { "Movement in the treeline -- everyone down, blades ready, nobody breathes till I say.", roles={"soldier","guard"}, moods={"brave","nervous"}, areas={battlefield=3, wilderness=2, road=1} },
-      { "Drew the dawn watch again. Whole camp asleep behind me, and only this cold and me awake to keep it.", roles={"soldier","guard"}, moods={"weary","solemn"}, areas={battlefield=3} },
+      { "Drew the dawn watch again. Whole camp asleep behind me, and only this cold and me awake to keep it.", roles={"soldier","guard"}, moods={"weary","solemn"}, areas={battlefield=3}, times={"dawn"} },
       { "Rations down to hardtack and hope. War always runs out of bread before it runs out of orders.", roles={"soldier"}, moods={"bitter","weary"}, areas={battlefield=3} },
       { "Sharpen your blade, check your straps, write your letter home. We move at first light.", roles={"soldier"}, moods={"solemn","brave"}, areas={battlefield=3} },
       { "Sappers worked through the night. Come morning that wall comes down and Light help whoever's behind it.", roles={"soldier"}, moods={"brave","solemn"}, areas={battlefield=3} },
@@ -728,7 +744,7 @@ return {
       { chain={"Wolf took two lambs out the south field last night.", "Two? It'll be back, then. They always come back for easy meat.", "I'll sit up with the dogs and a lantern.", "I'll sit with you. Bring the good ale, it'll be a long watch."}, roles={"farmer"}, moods={"brave","gruff"}, areas={rural=3, wilderness=1} },
       { chain={"Market price for grain's dropped again. The city merchants are bleeding us.", "Same every year after a good harvest. Plenty makes us poor, somehow.", "There's a cruel joke in there.", "The joke's on whoever thought farming was a path to fortune."}, roles={"farmer"}, moods={"bitter","weary"}, areas={rural=3} },
       { chain={"Old mare foaled before dawn. Both came through fine.", "That's the third this %season%. Good blood in that stock.", "Reckon the foal'll fetch a fine price come the fair.", "Don't sell her. I saw you name her already. You never sell the named ones."}, roles={"farmer"}, moods={"warm","kindly"}, areas={rural=3} },
-      { chain={"You hear the harvest festival's back on this year?", "After last %season%? Didn't think we'd have the heart for it.", "That's exactly why we need it. A village that can't dance is a village half-buried.", "...then I'll fetch the fiddle down from the loft."}, roles={"farmer"}, moods={"kindly","cheerful"}, areas={rural=3} },
+      { chain={"You hear the harvest festival's back on this year?", "After last %season%? Didn't think we'd have the heart for it.", "That's exactly why we need it. A village that can't dance is a village half-buried.", "...then I'll fetch the fiddle down from the loft."}, roles={"farmer"}, moods={"kindly","cheerful"}, areas={rural=3}, events={"the Harvest Festival"} },
       { chain={"Scarecrow's gone again. Third one this month.", "Crows or kids?", "Crows wouldn't take the hat. It's kids. Cheeky little urchins from the mill.", "Leave 'em be. A stolen hat's a small toll for a quiet field."}, roles={"farmer"}, moods={"wry","kindly"}, areas={rural=3} },
       -- == Battlefield & war-camp duos (expansion, faction-neutral) ==
       { chain={"Drums on the far ridge again. They don't mean to let us sleep.", "Let them drum. A man can fear in rhythm same as silence.", "...you always know the wrong thing to say to make me feel better.", "It's a gift. Now sharpen your blade and stop your shaking."}, roles={"soldier"}, moods={"brave","cowardly"}, areas={battlefield=3} },
@@ -832,7 +848,7 @@ return {
       { "Redridge militia hold that border against %monster% raids with a handful of stout souls and a mountain of stubbornness. Somebody from the %city% ought to help.", roles={"soldier"}, moods={"brave","gruff"}, areas={rural=2, wilderness=1} },
       { "A gnome 'optimized' my %item% and now it hums the Stormwind anthem and won't stop. Half genius, half hazard, all Tinker Town. A terrible, patriotic mistake.", roles={"craftsman"}, moods={"wry","weary"}, areas={"city"} },
       { "The Cathedral's taken in Westfall refugees, whole families on the steps, the Bishop turning none away. We'll MAKE room. That's the Alliance, or it's just a banner.", roles={"priest","citizen"}, moods={"kindly","solemn"}, areas={"city"} },
-      { "Every Brewfest I meet the dwarf who dragged me from a drift in %zone% by my collar. Same Ironforge corner, same silence, same bond. Some things you forge once.", roles={"soldier"}, moods={"warm","weary"}, areas={"city"} },
+      { "Every Brewfest I meet the dwarf who dragged me from a drift in %zone% by my collar. Same Ironforge corner, same silence, same bond. Some things you forge once.", roles={"soldier"}, moods={"warm","weary"}, areas={"city"}, events={"Brewfest"} },
       { "The Stormwind nobles are throwing a masque for the %event% and hired half the Trade District to cater it. A serving tray's the best disguise in the %city%.", roles={"citizen"}, moods={"gossipy","wry"}, areas={"city"} },
       { "A draenei sat with a frightened Westfall child on the Cathedral steps and just... hummed, soft, in her own tongue, till the little one slept. The Light has no language.", roles={"priest"}, moods={"kindly","warm"}, areas={"city"} },
       { "Ironforge Senate's been arguing the %tradegood% tariffs for three days straight. The dwarves can turn a coin debate into an epic saga. I've started bringing %food%.", roles={"citizen"}, moods={"wry","weary"}, areas={"city"} },
@@ -878,7 +894,7 @@ return {
       -- Ironforge & the dwarves
       { "The Great Forge never goes cold, and neither does a dwarf's welcome. Warm stone, warm ale, warm hearts — Ironforge has the lot.", roles={"craftsman"}, moods={"warm","boastful"}, areas={"city"} },
       { "Explorers' League just hauled a crate of %item% in from a dig in %zone%. Half of it's priceless. Half of it's rubble. They can't tell which yet.", roles={"adventurer"}, moods={"wry"}, areas={"city"} },
-      { "First snow in Dun Morogh and all of Ironforge smells of mulled %drink% and hot %ore%. Best %season% under the mountain.", roles={"craftsman"}, moods={"warm","cheerful"}, areas={"city"} },
+      { "First snow in Dun Morogh and all of Ironforge smells of mulled %drink% and hot %ore%. Best %season% under the mountain.", roles={"craftsman"}, moods={"warm","cheerful"}, areas={"city"}, seasons={"winter"} },
       { "A dwarf challenged me to drink him under the table. I'm a draenei. I weigh as much as his whole clan. He won anyway.", roles={"drunkard"}, moods={"wry"}, areas={"city"} },
       { "The tram to Stormwind broke down mid-tunnel again. Spent an hour underground with a gnome explaining the engineering. I understood none of it. Lovely fellow.", roles={"adventurer"}, moods={"wry","weary"}, areas={"city"} },
       -- Darnassus, night elves, Teldrassil
@@ -952,7 +968,7 @@ return {
       "%weather% over Dun Morogh this %timeofday%. The tram's running slow and the whole of Ironforge smells of wet beard.",
       { "A dwarf at the Stonefire Tavern swears he wrestled %rare% in the Hinterlands. Sober, he tells it shorter.", roles={"drunkard"}, moods={"boastful","wry"}, areas={"city"} },
       -- == Alliance: Elwynn/Westfall farms & rural (expansion) ==
-      { "Harvest's in early this year. The Elwynn fields came good and the granary's nearly full. The Light's been kind.", roles={"farmer"}, moods={"warm","cheerful"}, areas={"rural"} },
+      { "Harvest's in early this year. The Elwynn fields came good and the granary's nearly full. The Light's been kind.", roles={"farmer"}, moods={"warm","cheerful"}, areas={"rural"}, seasons={"autumn"} },
       { "Westfall's dust gets in everything. In your bread, your boots, your teeth. A farmer's lot, and I'd not trade it.", roles={"farmer"}, moods={"weary","wry"}, areas={"rural"} },
       { "Lost two sheep to the prowlers off the Elwynn treeline last night. Found one. The other's a wolf's supper now.", roles={"farmer"}, moods={"gruff","bitter"}, areas={"rural"} },
       { "Goldshire's quiet of a morning before the adventurers wake. Just the smithy ringing and the smell of %food% from the inn.", roles={"farmer"}, moods={"dreamy"}, areas={"rural"} },
@@ -1039,7 +1055,7 @@ return {
       { chain={"Redridge sent word — %monster% raids out of the hills again.", "Those folk have held that border alone for a generation.", "A handful of militia and a lot of stubbornness, aye.", "Then I'll ride out with my old blade and lend the stubbornness a hand. Somebody from the %city% ought to remember Redridge exists."}, roles={"soldier","adventurer"}, moods={"brave","gruff"}, areas={rural=2, wilderness=1} },
       { chain={"A gnome offered to 'optimize' my %item% with a gadget.", "Did you let him?", "It now does three things it never did and one I can't switch off.", "...that's Tinker Town for you. Half genius, half hazard, all enthusiasm. What's the thing you can't switch off?", "It hums the Stormwind anthem. Constantly. I've made a terrible, patriotic mistake."}, roles={"craftsman"}, moods={"wry","weary"}, areas={"city"} },
       { chain={"The Cathedral's taking Westfall refugees now.", "Whole families on the steps. The Bishop turned none away.", "Where will they all sleep?", "Wherever there's room, and we'll MAKE room. That's the Alliance, or it's just a word on a banner. Fetch blankets and spare %food%. We've work to do."}, roles={"priest","citizen"}, moods={"kindly","solemn"}, areas={"city"} },
-      { chain={"You served the northern campaign in %zone%, didn't you. With the dwarves.", "Shoulder to shoulder. A dwarf named Brann-something dragged me out of a drift by my collar.", "Ever find him after?", "Every Brewfest, same Ironforge tavern, same corner. We don't say much. We don't have to. Some bonds you forge once and they hold forever."}, roles={"soldier"}, moods={"warm","weary"}, areas={city=1, road=1} },
+      { chain={"You served the northern campaign in %zone%, didn't you. With the dwarves.", "Shoulder to shoulder. A dwarf named Brann-something dragged me out of a drift by my collar.", "Ever find him after?", "Every Brewfest, same Ironforge tavern, same corner. We don't say much. We don't have to. Some bonds you forge once and they hold forever."}, roles={"soldier"}, moods={"warm","weary"}, areas={city=1, road=1}, events={"Brewfest"} },
       { chain={"The Stormwind nobles are throwing a masque for the %event%.", "And half the Trade District's been hired to cater it.", "Bet the kitchen hears better secrets than the ballroom.", "Always does. A serving tray's the best disguise in the %city% — nobody watches their tongue around the help. We'll know it all by the second course."}, roles={"citizen"}, moods={"gossipy","wry"}, areas={"city"} },
       -- ============================================================
       -- == EXPANSION BATCH 3: tagged duos (ALLIANCE)
@@ -1265,7 +1281,7 @@ return {
       { "Took the zeppelin from Orgrimmar to the Undercity. Goblin pilot did a loop 'for fun.' I did not have fun.", roles={"adventurer"}, moods={"wry","nervous"} },
       { "Spent the afternoon in Silvermoon just looking at the architecture. Felt underdressed the entire time.", moods={"dreamy"}, areas={"city"} },
       { "Thunder Bluff at dawn, Undercity at dusk. The Horde lands have a beauty the maps never capture.", moods={"dreamy"} },
-      { "Summer heat in Orgrimmar is no joke. Even the orcs are seeking shade in the Drag today.", moods={"weary"}, areas={"city"} },
+      { "Summer heat in Orgrimmar is no joke. Even the orcs are seeking shade in the Drag today.", moods={"weary"}, areas={"city"}, seasons={"summer"} },
       { "Thunder over Thunder Bluff. On the nose, I know, but the tauren love it.", moods={"wry"}, areas={"rural"} },
       { "The Cleft of Shadow gives me the creeps and I'm a warlock. That's saying something.", roles={"mage"}, moods={"nervous","wry"}, areas={"city"} },
       { "Valley of Wisdom is where the old shaman gather. Walk soft and listen; they've earned their silence.", roles={"priest"}, moods={"solemn"}, areas={"city"} },

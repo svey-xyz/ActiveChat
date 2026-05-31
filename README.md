@@ -250,6 +250,10 @@ should use the `chain=` form.)
 | `roles` | List of role archetypes the line suits. **Omit = any role.** |
 | `moods` | List of personalities the line suits. **Omit = any personality.** |
 | `areas` | Area fit: **omit** = global; **list** = uniform; **map** = graded (unlisted areas hard-excluded). |
+| `times` | Time-of-day fit: **omit** = any time; **list** = uniform; **map** = graded (unlisted buckets hard-excluded). See "Context-aware chatter". |
+| `events` | Event fit (binary): **omit** = fires regardless; **list** of event names = fires only while one is active (or, with `eventWindow`, in its run-up/wind-down). See "Context-aware chatter". |
+| `eventWindow` | Pairs with `events`: `"active"` (default) / `"approach"` / `"after"`. See "Context-aware chatter". |
+| `seasons` | Season fit: same list/map/hard-exclude semantics as `times`. See "Context-aware chatter". |
 | `weight` | Relative pick frequency (default `1`). Bump good generic lines up. |
 | `cooldown` | Min ticks before this exact line repeats (default `lineCooldownTicks`). Raise for distinctive lines. |
 
@@ -266,11 +270,139 @@ score = weight
       * roleFactor   (boost if char.role ∈ line.roles; 1.0 if untagged; a low floor on mismatch)
       * moodFactor   (boost if char.personality ∈ line.moods; 1.0 if untagged; low floor on mismatch)
       * areaFactor   (1.0 if untagged/global; per-area weight if char.area is listed; 0 = EXCLUDE otherwise)
+      * timeFactor   (1.0 if untagged; per-bucket weight if ctx.timeKey is listed; 0 = EXCLUDE otherwise)
+      * eventFactor  (1.0 if untagged; 1.0 when a tagged event applies — see eventWindow; 0 = EXCLUDE otherwise)
+      * seasonFactor (1.0 if untagged; per-season weight if ctx.season is listed; 0 = EXCLUDE otherwise)
       * recencyPenalty (0 within the line's cooldown, ramping back to 1)
 ```
 
 The next line is a weighted-random pick over score > 0. Role/mood mismatches only
-*lower* the odds (never zero); only an out-of-area tagged line is hard-excluded.
+*lower* the odds (never zero); out-of-area, out-of-time, out-of-event, and
+out-of-season tagged lines are hard-excluded.
+
+`timeFactor` and `seasonFactor` mirror `areaFactor` exactly: an **untagged** line is
+always `1.0` (global), a **graded match** is boosted by `timeMatchStrength` /
+`seasonMatchStrength` (default `3.0`, like `areaMatchStrength`), and a line that *is*
+tagged but doesn't match the current bucket/season is excluded. `eventFactor` is
+**binary** — an event-tagged line is fundamentally *about* that event, so it either
+applies (`1.0`) or is excluded (`0`), with no graded boost and no low floor. The
+**fallback invariant** holds throughout: because untagged lines stay `1.0` on every
+factor, a character always has eligible candidates even when every tagged line is out
+of context — and if the in-game clock/event/season can't be read at all, the
+corresponding factor stays `1.0` (no exclusion) rather than going silent. See
+"Context-aware chatter" for how `ctx` (the live time/event/season) is sourced.
+
+---
+
+## Context-aware chatter
+
+By default the chatter doesn't just read like Azeroth — it reads like Azeroth *right
+now*. Night lines fire at night, festival lines fire during the actual festival, and
+season/weather talk tracks the real game state instead of a coin flip. This is a
+**selection-and-substitution refinement**, not a new subsystem: it reuses the line
+scorer (three new factors alongside `areaFactor`) and the placeholder substitution
+pass (the time/event/season tokens now resolve to *what's true*). Everything stays
+inside the fiction — **no real-world clocks, no "server time" meta** — and degrades
+gracefully: if a context source is unavailable, that dimension reverts to today's
+random behaviour and nobody goes silent.
+
+It's all behind the flags in "Context-aware chatter flags" above. Turn the master
+flag (or any sub-flag) off and you get exactly the old random behaviour.
+
+### The three new line tags
+
+Authoring gains three optional tags, with the **same** list/map/hard-exclude
+semantics the `area` tag already uses (see "Tagged authoring format"). Leave generic
+ambience untagged — that global pool is the fallback the matcher needs.
+
+| Field | Meaning |
+|---|---|
+| `times` | Time-of-day fit. **Omit** = any time. **List** (`{"night","dusk"}`) = uniform fit; unlisted buckets are hard-excluded. **Map** (`{night=3, dusk=1}`) = graded. Buckets: `dawn` / `morning` / `midday` / `afternoon` / `dusk` / `night` (hour-of-day from the in-game clock). |
+| `events` | Event fit (**binary** — no graded form). **Omit** = fires regardless of events. A **list** of event display-names = fires **only while one of those events is active** (or, with `eventWindow`, in its approach/after window); otherwise hard-excluded. |
+| `eventWindow` | Pairs with `events`. `"active"` (default) = only while live. `"approach"` = also fire in the **N-day run-up** (`eventApproachDays`, default `5`), keyed off `%nextevent%`. `"after"` = also fire in the **N-day wind-down** (`eventAfterDays`, default `3`), keyed off `%lastevent%`. |
+| `seasons` | Season fit. Same list/map/hard-exclude semantics as `times`. Seasons: `winter` / `spring` / `summer` / `autumn`. |
+
+```lua
+-- night-only ambience (stays silent until evening, fires uniformly at dusk/night)
+{ "The lamplighters are done; only the watch is awake now.",
+  roles={"guard"}, times={"night","dusk"} },
+
+-- fires ONLY while Hallow's End is the live game event; graded toward late hours
+{ "Mind the Headless Horseman if you're out past dark for %event%.",
+  events={"Hallow's End"}, times={night=3, dusk=2} },
+
+-- anticipation: fires in the run-up to Winter Veil (not during it)
+{ "Only a few days until %nextevent% -- have you hung the holly yet?",
+  events={"Winter Veil"}, eventWindow="approach" },
+
+-- aftermath: fires just after Brewfest ends
+{ "Quiet now that %lastevent% is over. The kegs are all dry.",
+  events={"Brewfest"}, eventWindow="after" },
+
+-- graded by time, no hard exclude elsewhere
+{ "%city% smells of bread already.", times={dawn=3, morning=2} },
+
+-- harvest flavor, autumn only
+{ "Good harvest this year -- the granaries are near full.",
+  seasons={"autumn"}, roles={"farmer"} },
+```
+
+Event display-names must match the names in `context_map.lua` exactly (e.g.
+`"the Harvest Festival"`, `"the Midsummer Fire Festival"` — articles included).
+
+### The context tokens
+
+`%timeofday%`, `%season%`, `%event%`, `%nextevent%`, and `%lastevent%` resolve to the
+**current** state rather than a random pick:
+
+- **`%timeofday%`** → a display phrase for the current in-game time bucket.
+- **`%season%`** → the current in-game season.
+- **`%event%`** → the most relevant *real* event, in priority order: (1) the line's
+  own `events` tag if present (so token and tag always agree), else (2) something
+  active now, else (3) the nearest event in time — soonest-upcoming preferred, then
+  most-recently-ended, else (4) a neutral phrase ("the next festival"). It is **never**
+  a random specific holiday — a character only ever names a holiday that is active,
+  imminent, or just past.
+- **`%nextevent%` / `%lastevent%`** → the soonest-upcoming / most-recently-ended event,
+  for explicit anticipation/aftermath lines; both fall back to the neutral phrase pool
+  when scheduling is unknown.
+
+If a dimension is disabled or its source API is missing, the token falls back to its
+original random helper — today's behaviour.
+
+### How context is sourced (and what happens if it can't be)
+
+Context is read into a cached `ctx` table on a slow cadence (TTL `contextRefreshMs`,
+default 60s) — never recomputed per candidate line. Every source is **capability-
+guarded**: if the API is absent, that field stays neutral, the matching factor stays
+`1.0`, and the token goes random — never an error, never silence.
+
+| Dimension | Source | Fallback if unavailable |
+|---|---|---|
+| Time of day | the in-game clock via `GetGameTime()` (on 3.3.5 the day/night cycle follows the server's local time-of-day, so this **matches what players see out the window** — no real-world time is surfaced). | `%timeofday%` random; `times` tags never exclude. |
+| Active events | `GetActiveGameEvents()`, mapped to display names. | `%event%` falls through to nearest/neutral; `events` tags never exclude. |
+| Nearest events | the `game_event` schedule via `WorldDBQuery` (read once at startup), projected around now within a ~30-day horizon. | `%nextevent%`/`%lastevent%` use the neutral phrase; `approach`/`after` windows simply don't widen eligibility. |
+| Season | the in-game month, with a holiday cross-check (e.g. Winter Veil ⇒ winter regardless of month). | `%season%` random; `seasons` tags never exclude. |
+
+The vocabulary and mappings live in a small author-editable data file,
+**`ActiveChat/context_map.lua`** — same philosophy as `npc_name.lua`. It holds
+`eventIdToName` (game-event ID → display name), `monthToSeason` (override for themed
+or southern-hemisphere realms), `eventNeutral` (the neutral phrase pool), and
+`eventBurst` (see below). Edit these without touching the engine.
+
+### Optional event-activation burst
+
+With `enableEventBurst = true` (default **off**), the engine fires one short
+character↔character "the festival has begun" exchange when an event flips from
+inactive to active — a two-line duo whose `%event%` resolves to the just-activated
+holiday. It is rate-limited to **once per activation** (a still-active event never
+re-fires), reuses the existing duo machinery, and is fully guarded — with the flag off
+the whole path is dead code, zero behavioural change.
+
+This is the first tie-in to the (separate) player-interaction roadmap: the same `ctx`
+table is the shared "what's true right now" seam that a future interaction responder
+will also read. See `docs/plans/PLAYER_INTERACTION_PLAN.md` and
+`docs/plans/CONTEXT_AWARE_PLAN.md`.
 
 ---
 
@@ -300,6 +432,26 @@ local faction_talk_time = {8000, 20000}   -- Horde-driver interval (ms)
 | `homeCityBias` | `true` | Bias `%city%` toward the speaking character's own home city (see below). |
 | `roleMoodMatchStrength` | `3.0` | How hard role/mood matching is weighted in line scoring (`1` = off). |
 | `areaMatchStrength` | `3.0` | How hard area matching is weighted in line scoring (`1` = off). |
+
+#### Context-aware chatter flags
+
+These control the time/event/season awareness (see "Context-aware chatter" below).
+Each dimension degrades gracefully: turning a flag off — or running on a build whose
+game-time/event API is missing — reverts that dimension to today's random behaviour.
+It is **safe to ship on any build**; nothing here can error or silence a character.
+
+| Var | Default | What it does |
+|---|---|---|
+| `enableContextAware` | `true` | Master switch for the whole context feature. Off ⇒ all three dimensions revert to random. |
+| `enableTimeContext` | `true` | In-game-clock-aware `times` tags + `%timeofday%`. |
+| `enableEventContext` | `true` | Active-event gating (`events`/`eventWindow` tags) + `%event%`/`%nextevent%`/`%lastevent%`. |
+| `enableSeasonContext` | `true` | In-game-month season (`seasons` tags) + `%season%`. |
+| `timeMatchStrength` | `3.0` | How hard a graded `times` match is boosted (`1` = off), like `areaMatchStrength`. |
+| `seasonMatchStrength` | `3.0` | How hard a graded `seasons` match is boosted (`1` = off). |
+| `contextRefreshMs` | `60000` | TTL (ms) of the cached `ctx`. Context is re-read at most this often, never per line. |
+| `eventApproachDays` | `5` | Length (days) of the `eventWindow="approach"` run-up window. |
+| `eventAfterDays` | `3` | Length (days) of the `eventWindow="after"` wind-down window. |
+| `enableEventBurst` | `false` | Optional one-shot "the festival has begun" exchange when an event flips active (see below). Off by default. |
 
 There is also an `ns` string near the top: an optional `WorldDBQuery` to source extra
 surnames from the world DB (blank = use only `npc_name.lua`).
@@ -374,9 +526,11 @@ value each time the line is spoken. (A token used twice in one line resolves to 
 | `%emote%` | an emote action verb (e.g. *cheer*, *facepalm*) |
 | `%gold%` | a random gold amount, suffixed `g` (e.g. *8500g*) |
 | `%level%` | a random character level, 2–80 |
-| `%event%` | a holiday or world event (e.g. *Hallow's End*, *Brewfest*) |
-| `%season%` | a season (e.g. *winter*, *high summer*) |
-| `%timeofday%` | a time of day (e.g. *dusk*, *the small hours before dawn*) |
+| `%event%` | the most relevant **real** holiday/world event — what's actually active now, else the nearest upcoming/just-past one, else a neutral phrase. **Context-aware** (no longer a random holiday). See "Context-aware chatter". |
+| `%nextevent%` | the **soonest upcoming** holiday/world event (or a neutral phrase if none is known). For explicit anticipation lines. |
+| `%lastevent%` | the **most recently ended** holiday/world event (or a neutral phrase if none is known). For explicit aftermath lines. |
+| `%season%` | the **current** in-game season (e.g. *winter*, *spring*). **Context-aware** — resolves to what's actually true now, not random. |
+| `%timeofday%` | the **current** in-game time of day (e.g. *dusk*, *the small hours before dawn*). **Context-aware** — resolves to the in-game clock, not random. |
 | `%shop%` | a named tavern, inn, or shop (e.g. *the Pig and Whistle Tavern*) |
 | `%route%` | a travel route or method (e.g. *the Deeprun Tram*) |
 | `%tale%` | a famous legend or story (e.g. *the Culling of Stratholme*) |
@@ -394,6 +548,12 @@ value each time the line is spoken. (A token used twice in one line resolves to 
 | `%companion%` | a vanity companion pet (e.g. *an Onyxian Whelpling*) |
 | `%enchant%` | a gear enchantment (e.g. *Mongoose*, *Crusader*) |
 | `%toy%` | a novelty/fun item (e.g. *a Noggenfogger Elixir*) |
+
+> **In-character rule for the context tokens.** `%timeofday%`, `%season%`, `%event%`,
+> `%nextevent%`, and `%lastevent%` always resolve to **fiction words only** — a
+> time-of-day phrase, a season name, or a holiday name. They **never** surface a real
+> clock (`22:00`), "server time", or a printed date. The time/season come from a
+> *mapping* over the in-game game-time, not a displayed value.
 
 ### Player-imitation tokens (use sparingly)
 

@@ -37,6 +37,22 @@ local homeCityBias            = true  -- bias %city% toward the speaker's home c
 local roleMoodMatchStrength   = 3.0   -- how hard role/mood matching is weighted (1 = off)
 local areaMatchStrength       = 3.0   -- how hard area matching is weighted (1 = off)
 
+-- Context-aware chatter config (CONTEXT_AWARE_PLAN.md "Config additions"). The
+-- full flag set is declared up front -- the later phases reuse it -- but Phase 1
+-- only acts on enableContextAware/enableTimeContext + contextRefreshMs. When a
+-- flag is off (or an API is missing) the matching dimension falls back to today's
+-- random behaviour: no silent characters, no errors.
+local enableContextAware   = true    -- master switch for the whole feature
+local enableTimeContext    = true    -- in-game-clock-aware times + %timeofday%
+local enableEventContext   = true    -- active-event gating + %event% (Phase 3+)
+local enableSeasonContext  = true    -- in-game-month season + %season% (Phase 5)
+local timeMatchStrength    = 3.0     -- like areaMatchStrength; 1 = off (Phase 2)
+local seasonMatchStrength  = 3.0     -- like areaMatchStrength; 1 = off (Phase 5)
+local contextRefreshMs     = 60000   -- ctx cache TTL (ms)
+local eventApproachDays    = 5       -- "approach" window before an event starts (Phase 4)
+local eventAfterDays       = 3       -- "after" window once an event ends (Phase 4)
+local enableEventBurst     = false   -- one-shot "festival has begun" burst on activation (Phase 6)
+
 local ns = ""
 -- Optional: a WorldDBQuery string to source NPC names from the DB.
 -- If blank, names come from npc_name.lua.
@@ -439,6 +455,462 @@ local function selectRandomRoute()        return routes[math.random(#routes)] en
 local function selectRandomTale()         return tales[math.random(#tales)] end
 local function selectRandomWeather()      return weathers[math.random(#weathers)] end
 
+-- Context vocabulary/maps (CONTEXT_AWARE_PLAN.md "Files"). Same require
+-- mechanism as npc_text/npc_name (ALE sets up the module path). Phase 3 uses
+-- ctxMap.eventIdToName (game_event ID -> holiday display name); later phases add
+-- month->season / timeKey->display here. Guarded so a missing/broken file never
+-- errors -- the engine simply falls back to today's random behaviour.
+local ctxMap = {}
+do
+    local ok, m = pcall(require, "context_map")
+    if (ok and type(m) == "table") then ctxMap = m end
+end
+
+-- ---------------------------------------------------------------------------
+-- Context-aware chatter (CONTEXT_AWARE_PLAN.md). Phase 1: time only.
+-- ---------------------------------------------------------------------------
+-- A single module-level cache of "what's true right now", refreshed on a slow
+-- TTL cadence (never recomputed per candidate line). Phase 1 populates only the
+-- time fields (hour/timeKey/refreshed); the rest hold their neutral defaults and
+-- are filled in by later phases. The commented `topic` slot is a forward-compat
+-- reservation for future chat-topic awareness (see plan "Forward-compat").
+local ctx = {
+    hour      = 0,          -- in-game hour 0..23 (from GetGameTime)
+    timeKey   = "night",    -- bucketed: "dawn"|"morning"|"midday"|"afternoon"|"dusk"|"night"
+    season    = "spring",   -- derived from in-game month (Phase 5)
+    active    = {},         -- set-like ACTIVE event names (Phase 3)
+    nextEvent = nil,        -- { name=..., daysAway=N } soonest upcoming (Phase 4)
+    lastEvent = nil,        -- { name=..., daysAgo=N }  most recently ended (Phase 4)
+    -- topic  = nil,        -- FORWARD-COMPAT: last chat topic (deferred; see Tie-in)
+    refreshed = 0,          -- ms tick of last refresh
+}
+
+-- Event-activation burst state (Phase 6) -- CONTEXT_AWARE_PLAN.md phased item 6 /
+-- "Event-sparked ambient bursts". All dead unless enableEventBurst is on.
+--   ctxActivePrev  -- snapshot of the LAST refresh's active-event name set. The
+--                     fresh set is diffed against this to detect events that just
+--                     transitioned into active (once per activation, naturally).
+--   ctxActiveSeeded-- false until the FIRST refresh seeds ctxActivePrev. The first
+--                     refresh only records the snapshot (no bursts) so already-
+--                     active holidays at startup don't all fire bursts at once.
+-- fireEventBurst is forward-declared here (a local) so refreshCtx -- defined just
+-- below -- can call it, while its body (which needs t.conv / assembleCast /
+-- makeItem, all defined much later) is assigned further down the file.
+local ctxActivePrev   = {}
+local ctxActiveSeeded = false
+local fireEventBurst                 -- assigned after the conversation machinery
+
+-- Coarse, fiction-friendly hour buckets; tune freely. The bucket is the
+-- tag/selection vocabulary; the display pool below is the wording vocabulary.
+local function bucketHour(h)
+    if h < 5  then return "night"     end
+    if h < 8  then return "dawn"      end
+    if h < 11 then return "morning"   end
+    if h < 14 then return "midday"    end
+    if h < 18 then return "afternoon" end
+    if h < 21 then return "dusk"      end
+    return "night"
+end
+
+-- monthToSeason(month) -> "winter"|"spring"|"summer"|"autumn" | nil. Looks up the
+-- in-game month (1..12) in ctxMap.monthToSeason (CONTEXT_AWARE_PLAN.md decision 4),
+-- with a northern-hemisphere inline fallback if the data file is older/missing so
+-- the engine still works standalone. Nil-safe: a non-number / out-of-range month
+-- (or a table that somehow lacks the key) returns nil and ctx.season stays neutral.
+local monthToSeasonMap = (type(ctxMap.monthToSeason) == "table")
+    and ctxMap.monthToSeason
+    or {
+        [1]="winter", [2]="winter", [3]="spring", [4]="spring", [5]="spring",
+        [6]="summer", [7]="summer", [8]="summer", [9]="autumn", [10]="autumn",
+        [11]="autumn", [12]="winter",
+    }
+local function monthToSeason(month)
+    if (type(month) ~= "number") then return nil end
+    return monthToSeasonMap[month]
+end
+
+-- Holiday display-name -> season cross-check (CONTEXT_AWARE_PLAN.md decision 4).
+-- After deriving the season from the month we sanity-check it against any active
+-- seasonal holiday so the calendar and the holiday never disagree: e.g. if Winter
+-- Veil is live it is winter regardless of any month-map edge case. Keys are the
+-- EXACT display names from ctxMap.eventIdToName; only holidays with an
+-- unambiguous season are listed (Darkmoon Faire, fishing derbies, etc. are
+-- season-neutral and intentionally omitted).
+local holidayToSeason = {
+    ["Winter Veil"]                 = "winter",
+    ["the Midsummer Fire Festival"] = "summer",
+    ["the Harvest Festival"]        = "autumn",
+    ["Pilgrim's Bounty"]            = "autumn",
+    ["Noblegarden"]                 = "spring",
+    ["the Lunar Festival"]          = "spring",
+}
+
+-- timeKey -> display-string pool for %timeofday% (Phase 1 inline; this pool moves
+-- to context_map.lua in a later phase per the plan -- TODO Phase 3/5). Each entry
+-- draws from the existing `timesofday` display vocabulary so substitution reads
+-- naturally and agrees with the clock.
+local timeKeyDisplay = {
+    night     = { "midnight", "nightfall", "the small hours before dawn" },
+    dawn      = { "dawn", "first light" },
+    morning   = { "the early morning", "first light" },
+    midday    = { "midday" },
+    afternoon = { "the afternoon", "midday" },
+    dusk      = { "dusk", "twilight", "the evening" },
+}
+
+-- Real ms tick source for the refresh TTL. Prefer the server clock
+-- (GetGameTime() is seconds on ALE); fall back to os.time() (also seconds, the
+-- convention already used for math.randomseed). Both are capability-guarded so an
+-- absent API never errors -- nowMs() always returns a sane monotonic-ish value.
+local function nowMs()
+    if (type(GetGameTime) == "function") then
+        local ok, secs = pcall(GetGameTime)
+        if (ok and type(secs) == "number") then return secs * 1000 end
+    end
+    return os.time() * 1000
+end
+
+-- activeEventNameSet() -> set-like { [displayName]=true } of currently-active
+-- holiday/world events (CONTEXT_AWARE_PLAN.md "Active events"). Capability-guarded
+-- once: if GetActiveGameEvents() is missing or the call fails, returns {} so the
+-- engine falls back (eventFactor stays 1.0 -> never excludes; %event% uses its
+-- random helper). Maps each active game_event ID through ctxMap.eventIdToName;
+-- IDs with no display-name mapping (PvP/AQ/internal events) are skipped.
+local function activeEventNameSet()
+    local set = {}
+    if (type(GetActiveGameEvents) ~= "function") then return set end
+    local ok, ids = pcall(GetActiveGameEvents)
+    if (not ok) or (type(ids) ~= "table") then return set end
+    local map = ctxMap.eventIdToName or {}
+    for _, id in pairs(ids) do
+        local name = map[id]
+        if (name) then set[name] = true end
+    end
+    return set
+end
+
+-- ---------------------------------------------------------------------------
+-- Nearest-event scheduling (Phase 4) -- CONTEXT_AWARE_PLAN.md decision 3.
+-- ---------------------------------------------------------------------------
+-- We read the game_event SCHEDULE once at startup and cache it, then compute the
+-- soonest-upcoming / most-recently-ended holiday per refresh as cheap arithmetic
+-- over that snapshot (no per-line cost). game_event semantics (AC 3.3.5):
+--   start_time -- timestamp the event first occurs (seconds; read via
+--                 UNIX_TIMESTAMP so ALE yields a clean integer, not a datetime).
+--   length     -- MINUTES the event lasts each occurrence.
+--   occurence  -- MINUTES between repeats (recurring holidays cycle on this).
+-- Only IDs that map to a display name (ctxMap.eventIdToName) are kept -- the rest
+-- are never an ambient-chatter subject.
+
+local DAY_SECONDS = 86400
+
+-- Horizon (days) past which we DON'T surface an event as "near". If nothing is
+-- within this window, the matching slot stays nil and %event% uses the neutral
+-- phrase pool rather than naming a far-off holiday as "soon". A holiday cycle is
+-- typically a year, so ~30 days keeps "approach/aftermath" honest.
+local NEAREST_HORIZON_DAYS = 30
+
+-- Module-level schedule snapshot: array of { id, name, startSec, lengthSec,
+-- occurSec }. Empty when WorldDBQuery is absent or the read fails -- in which case
+-- nearestEvents() returns nil/nil and %event% falls back to the neutral pool.
+local eventSchedule = {}
+
+-- readEventSchedule() -- one-shot startup read of the game_event schedule.
+-- Capability-guarded once on WorldDBQuery; iterates the ALEQuery result via the
+-- documented API (GetRowCount/GetUInt32/NextRow, columns 0-indexed). start_time
+-- is selected through UNIX_TIMESTAMP() so it arrives as integer seconds. Any
+-- unexpected result shape is swallowed by pcall so a surprise never errors the
+-- module load -- the snapshot simply stays empty (neutral fallback).
+local function readEventSchedule()
+    if (type(WorldDBQuery) ~= "function") then return {} end
+    local map = ctxMap.eventIdToName or {}
+    local out = {}
+    local ok = pcall(function()
+        local q = WorldDBQuery(
+            "SELECT eventEntry, UNIX_TIMESTAMP(start_time), length, occurence FROM game_event")
+        if (not q) then return end
+        -- GetRowCount() bounds the loop so an empty/odd result can't spin; we
+        -- still guard NextRow() for engines that only support row-walking.
+        local rows = (type(q.GetRowCount) == "function") and q:GetRowCount() or nil
+        local n = 0
+        repeat
+            local id        = q:GetUInt32(0)
+            local name      = map[id]
+            if (name) then
+                local startSec  = q:GetUInt32(1)        -- UNIX_TIMESTAMP -> seconds
+                local lengthMin = q:GetUInt32(2)        -- minutes
+                local occurMin  = q:GetUInt32(3)        -- minutes (0 = non-recurring)
+                out[#out + 1] = {
+                    id        = id,
+                    name      = name,
+                    startSec  = startSec,
+                    lengthSec = (lengthMin or 0) * 60,
+                    occurSec  = (occurMin or 0) * 60,
+                }
+            end
+            n = n + 1
+            if (rows ~= nil) and (n >= rows) then break end
+        until (type(q.NextRow) ~= "function") or (not q:NextRow())
+    end)
+    if (not ok) then return {} end
+    return out
+end
+
+eventSchedule = readEventSchedule()
+
+-- nearestEvents(now) -> nextEvent, lastEvent (each {name=, daysAway/daysAgo=} or
+-- nil). `now` is the current game timestamp in SECONDS (GetGameTime()). For each
+-- scheduled holiday we project its recurrence cycle:
+--   * a NON-recurring event (occurSec == 0) contributes its single window.
+--   * a RECURRING event repeats every occurSec; we find the cycle index k around
+--     `now`, giving the most recent past start and the next future start (this is
+--     where the year-WRAP case is handled -- the "next start" is simply the next
+--     cycle's start). occurence > length, so windows never overlap.
+-- We keep the soonest upcoming start (>= now) as nextEvent and the most recent
+-- end (<= now) as lastEvent. Day-offsets are capped to NEAREST_HORIZON_DAYS; a
+-- slot with nothing inside the horizon is left nil so %event% stays neutral.
+local function nearestEvents(now)
+    if (type(now) ~= "number") or (#eventSchedule == 0) then return nil, nil end
+    local horizonSec = NEAREST_HORIZON_DAYS * DAY_SECONDS
+
+    local nextName, nextStart                     -- soonest future start
+    local lastName, lastEnd                        -- most recent past end
+
+    for _, ev in ipairs(eventSchedule) do
+        local nextS, prevS                         -- this event's bracketing starts
+        if (ev.occurSec and ev.occurSec > 0) then
+            -- Recurring: locate the cycle around `now`. k = how many whole cycles
+            -- have elapsed since the very first start (clamped at >= 0).
+            local elapsed = now - ev.startSec
+            local k = math.floor(elapsed / ev.occurSec)
+            if (k < 0) then k = 0 end
+            prevS = ev.startSec + k * ev.occurSec      -- start of the current/just-past cycle
+            nextS = prevS + ev.occurSec                -- start of the next cycle (WRAP case)
+            -- If we're still BEFORE this event's first ever start, prevS would be
+            -- in the future; in that case there is no past occurrence yet.
+            if (prevS > now) then nextS = prevS; prevS = nil end
+        else
+            -- Non-recurring single window.
+            if (ev.startSec >= now) then nextS = ev.startSec else prevS = ev.startSec end
+        end
+
+        -- Upcoming start candidate.
+        if (nextS) and (nextS >= now) then
+            if (not nextStart) or (nextS < nextStart) then
+                nextStart = nextS; nextName = ev.name
+            end
+        end
+
+        -- Most-recent past END candidate (start of the past cycle + its length).
+        if (prevS) and (prevS <= now) then
+            local endS = prevS + (ev.lengthSec or 0)
+            if (endS <= now) then
+                if (not lastEnd) or (endS > lastEnd) then
+                    lastEnd = endS; lastName = ev.name
+                end
+            end
+        end
+    end
+
+    local nextEvent, lastEvent
+    if (nextName) then
+        local away = nextStart - now
+        if (away <= horizonSec) then                   -- horizon cap: don't surface far-off events
+            nextEvent = { name = nextName, daysAway = math.floor(away / DAY_SECONDS) }
+        end
+    end
+    if (lastName) then
+        local ago = now - lastEnd
+        if (ago <= horizonSec) then
+            lastEvent = { name = lastName, daysAgo = math.floor(ago / DAY_SECONDS) }
+        end
+    end
+    return nextEvent, lastEvent
+end
+
+-- TTL-guarded context refresh. Phase 1 only resolves the in-game hour ->
+-- timeKey, guarding GetGameTime + os.date so a missing API leaves ctx.timeKey
+-- neutral and the engine falls back to random. Respects the master/time flags.
+local function refreshCtx()
+    local now = nowMs()
+    if (now - ctx.refreshed < contextRefreshMs) then return end   -- common path: cheap early-exit
+    ctx.refreshed = now
+
+    if (not enableContextAware) then return end
+
+    -- Time + season share ONE os.date decomposition of the GetGameTime() seconds
+    -- timestamp (os.date here is a *decomposition* of the game timestamp, never a
+    -- surfaced real date). Capability-guard the API so an absent clock leaves both
+    -- timeKey and season neutral. t.hour drives the time block; t.month the season.
+    local t
+    if ((enableTimeContext or enableSeasonContext)
+        and type(GetGameTime) == "function" and type(os.date) == "function") then
+        local ok, decomposed = pcall(function() return os.date("*t", GetGameTime()) end)
+        if (ok and type(decomposed) == "table") then t = decomposed end
+    end
+
+    -- Time: derive the in-game hour -> timeKey bucket.
+    if (enableTimeContext and t and type(t.hour) == "number") then
+        ctx.hour    = t.hour
+        ctx.timeKey = bucketHour(ctx.hour)
+        -- else: leave ctx.timeKey at its prior/neutral value; %timeofday% falls back.
+    end
+
+    -- Active events (Phase 3): set-like { ["Hallow's End"]=true, ... }. Empty {}
+    -- when the API is absent/unavailable, so eventFactor never excludes blindly
+    -- and %event% falls back. Guarded by the event sub-flag. Populated BEFORE the
+    -- season block so the holiday cross-check (below) reads the fresh active set.
+    if (enableEventContext) then
+        ctx.active = activeEventNameSet()
+
+        -- Event-activation burst (Phase 6): diff the fresh active set against the
+        -- previous-refresh snapshot to detect events that just flipped INTO active,
+        -- and fire a one-shot festival burst for each (behind enableEventBurst).
+        -- The previous-set diff gives once-per-activation for free: a still-active
+        -- event is in BOTH sets, so it never re-fires on a later refresh. The very
+        -- first refresh only seeds the snapshot (ctxActiveSeeded guard) so holidays
+        -- already live at startup don't all burst at once. fireEventBurst is fully
+        -- nil-safe and flag-guarded; if any machinery is unavailable it no-ops.
+        if (enableEventBurst and fireEventBurst) then
+            if (ctxActiveSeeded) then
+                for name, _ in pairs(ctx.active) do
+                    if (not ctxActivePrev[name]) then       -- newly active this refresh
+                        fireEventBurst(name)
+                    end
+                end
+            end
+            ctxActiveSeeded = true
+            local snap = {}
+            for name, _ in pairs(ctx.active) do snap[name] = true end
+            ctxActivePrev = snap                            -- store AFTER diffing
+        end
+
+        -- Nearest events (Phase 4): soonest-upcoming / most-recently-ended holiday
+        -- computed over the cached game_event snapshot. nil-safe -- when the
+        -- schedule is absent (WorldDBQuery missing) nearestEvents returns nil/nil
+        -- and %event%/%nextevent%/%lastevent% use the neutral phrase pool. Reads
+        -- the raw game-time seconds (GetGameTime) when available, else os.time.
+        local nowSec
+        if (type(GetGameTime) == "function") then
+            local ok, secs = pcall(GetGameTime)
+            if (ok and type(secs) == "number") then nowSec = secs end
+        end
+        if (not nowSec) and (type(os.time) == "function") then nowSec = os.time() end
+        ctx.nextEvent, ctx.lastEvent = nearestEvents(nowSec)
+    end
+
+    -- Season (Phase 5): derive from the in-game MONTH via monthToSeason, then
+    -- cross-check against any active seasonal holiday so the calendar and the
+    -- holidays never disagree (decision 4) -- e.g. Winter Veil active => winter
+    -- even in a summer month. When the clock is absent or the month doesn't map,
+    -- leave ctx.season at its prior/neutral value so seasonFactor falls back to
+    -- 1.0 and %season% uses its random helper. ctx.active is already refreshed
+    -- above (when enableEventContext), so the cross-check sees the live holidays.
+    if (enableSeasonContext and t and type(t.month) == "number") then
+        local season = monthToSeason(t.month)
+        if (season) then ctx.season = season end
+        if (ctx.active) then
+            for name, _ in pairs(ctx.active) do
+                local s = holidayToSeason[name]
+                if (s) then ctx.season = s break end
+            end
+        end
+    end
+end
+
+-- recordTopic(line) -- FORWARD-COMPAT no-op stub (plan "Forward-compat
+-- checklist"). The emit path calls this so wiring a real chat-topic ring buffer
+-- later is a one-function change, not a hunt through the renderer.
+local function recordTopic(line) end
+
+-- Resolve %timeofday% from context when available; else random fallback. Context
+-- is "available" when the master + time flags are on AND we have a pool for the
+-- current ctx.timeKey (which stays neutral when GetGameTime/os.date are absent).
+local function resolveTimeOfDay(c)
+    if (enableContextAware and enableTimeContext and c and c.timeKey) then
+        local pool = timeKeyDisplay[c.timeKey]
+        if (pool and #pool > 0) then return pool[math.random(#pool)] end
+    end
+    return selectRandomTimeOfDay()                          -- fallback: today's behaviour
+end
+
+-- Resolve %season% from context when available; else random fallback (parallel to
+-- resolveTimeOfDay). Context is "available" when the master + season flags are on
+-- AND ctx.season is set (it stays neutral when GetGameTime/os.date are absent, in
+-- which case we keep today's random behaviour). ctx.season is already a fiction
+-- word ("spring"|"summer"|"autumn"|"winter") so it substitutes directly.
+local function resolveSeason(c)
+    if (enableContextAware and enableSeasonContext and c and c.season) then
+        return c.season
+    end
+    return selectRandomSeason()                             -- fallback: today's behaviour
+end
+
+-- Neutral event phrase pool (Phase 4): festival-agnostic wording used when no
+-- real holiday is active/near (or the schedule is unknown), so a character never
+-- names a specific holiday out of context. Sourced from context_map.lua with a
+-- small inline fallback if the data file is missing/older.
+local eventNeutralPool = (type(ctxMap.eventNeutral) == "table" and #ctxMap.eventNeutral > 0)
+    and ctxMap.eventNeutral
+    or { "the next festival", "the holidays", "the coming festivities" }
+local function selectNeutralEvent()
+    return eventNeutralPool[math.random(#eventNeutralPool)]
+end
+
+-- Resolve %event% to the MOST RELEVANT real event (CONTEXT_AWARE_PLAN.md
+-- "Context-aware substitution"), in priority order. `item` is the line being
+-- rendered (may be nil); `c` is the context.
+--   1. if the line has an `events` tag -> the tagged event name (tag WINS, so the
+--      token and the line's eligibility always agree). With multiple tagged
+--      events, prefer one that is actually active; else the first tagged name.
+--   2. else an entry from c.active (something live right now).
+--   3. else (Phase 4) the NEAREST event in time: c.nextEvent (preferred) then
+--      c.lastEvent.
+--   4. else a NEUTRAL phrase ("the next festival"). NEVER a random specific
+--      holiday -- a character only ever names a holiday that is active, imminent,
+--      or just past.
+local function resolveEvent(item, c)
+    if (enableContextAware and enableEventContext) then
+        -- 1. tagged line: the tag's event wins (prefer an active one).
+        if (item) and (not item.eventsGlobal) and (item.events) and (#item.events > 0) then
+            if (c and c.active) then
+                for _, name in ipairs(item.events) do
+                    if (c.active[name]) then return name end
+                end
+            end
+            return item.events[1]
+        end
+        -- 2. else something live right now.
+        if (c and c.active) then
+            for name in pairs(c.active) do return name end
+        end
+        -- 3. else the nearest event in time (upcoming preferred, then just-past).
+        if (c) then
+            if (c.nextEvent and c.nextEvent.name) then return c.nextEvent.name end
+            if (c.lastEvent and c.lastEvent.name) then return c.lastEvent.name end
+        end
+    end
+    -- 4. neutral phrase -- never a random specific holiday.
+    return selectNeutralEvent()
+end
+
+-- Resolve %nextevent% / %lastevent% (Phase 4). These name the soonest-upcoming /
+-- most-recently-ended holiday for explicit anticipation/aftermath lines; both
+-- fall back to the neutral phrase pool when scheduling is unknown (or context
+-- disabled), so they never name a wrong holiday.
+local function resolveNextEvent(c)
+    if (enableContextAware and enableEventContext and c and c.nextEvent and c.nextEvent.name) then
+        return c.nextEvent.name
+    end
+    return selectNeutralEvent()
+end
+local function resolveLastEvent(c)
+    if (enableContextAware and enableEventContext and c and c.lastEvent and c.lastEvent.name) then
+        return c.lastEvent.name
+    end
+    return selectNeutralEvent()
+end
+
 -- Numeric placeholders. Returned as game-formatted strings.
 -- %gold%: realistic magnitudes, suffixed "g" (WoW convention).
 local function selectRandomGold()
@@ -514,6 +986,81 @@ local function normalizeAreas(areas)
     return false, map
 end
 
+-- Normalize an authored `times` field into {timesGlobal, times-map}. EXACT
+-- mirror of normalizeAreas (CONTEXT_AWARE_PLAN.md "New line tags"): omitted =>
+-- any time (global wildcard), list {"night","dusk"} => uniform weight 1 per
+-- listed bucket, map {night=3, dusk=1} => graded weights copied as-is. Unlisted
+-- buckets are hard-excluded at score time (timeFactor), same as area.
+local function normalizeTimes(times)
+    if (times == nil) then
+        return true, {}                         -- omitted => global / any time
+    end
+    local map = {}
+    if (times[1] ~= nil) then
+        -- list form: {"night","dusk"} -> uniform weight 1 per listed bucket.
+        for _, k in ipairs(times) do map[k] = 1 end
+    else
+        -- map form: {night=3, dusk=1} -> copy graded weights as-is.
+        for k, w in pairs(times) do map[k] = w end
+    end
+    return false, map
+end
+
+-- Normalize an authored `seasons` field into {seasonsGlobal, seasons-map}. EXACT
+-- mirror of normalizeTimes (CONTEXT_AWARE_PLAN.md "New line tags"): omitted =>
+-- any season (global wildcard), list {"autumn"} => uniform weight 1 per listed
+-- season, map {autumn=3, winter=1} => graded weights copied as-is. Unlisted
+-- seasons are hard-excluded at score time (seasonFactor), same as area/time.
+local function normalizeSeasons(seasons)
+    if (seasons == nil) then
+        return true, {}                         -- omitted => global / any season
+    end
+    local map = {}
+    if (seasons[1] ~= nil) then
+        -- list form: {"autumn","winter"} -> uniform weight 1 per listed season.
+        for _, k in ipairs(seasons) do map[k] = 1 end
+    else
+        -- map form: {autumn=3, winter=1} -> copy graded weights as-is.
+        for k, w in pairs(seasons) do map[k] = w end
+    end
+    return false, map
+end
+
+-- Normalize an authored `events` field into {eventsGlobal, events-list}.
+-- CONTEXT_AWARE_PLAN.md "New line tags": events is BINARY by design (no graded
+-- boost) -- omitted => fires regardless of events (global wildcard); a LIST of
+-- event display-names => the line fires ONLY while one of those events is active
+-- (ctx.active), otherwise hard-excluded. The list/map plumbing mirrors
+-- normalizeTimes, but the factor ignores any weights -- a map form is accepted
+-- (keys taken as names) but treated identically to a list. Returns the names as
+-- a plain ARRAY (order-agnostic membership check; also used to resolve %event%).
+local function normalizeEvents(events)
+    if (events == nil) then
+        return true, {}                         -- omitted => global / any/no event
+    end
+    local list = {}
+    if (events[1] ~= nil) then
+        -- list form: {"Hallow's End", "the Day of the Dead"} -> names as-is.
+        for _, name in ipairs(events) do list[#list + 1] = name end
+    else
+        -- map form: {["Hallow's End"]=anything} -> keys are the names (weights
+        -- ignored; events is binary).
+        for name, _ in pairs(events) do list[#list + 1] = name end
+    end
+    return false, list
+end
+
+-- Normalize an authored `eventWindow` tag (Phase 4) into one of the three valid
+-- values. CONTEXT_AWARE_PLAN.md "New line tags": "active" (default) = fires only
+-- while the tagged event is LIVE (Phase 3 behaviour); "approach" = ALSO fires in
+-- the N-day run-up (keys off ctx.nextEvent); "after" = ALSO fires in the N-day
+-- wind-down (keys off ctx.lastEvent). Anything unrecognised falls back to
+-- "active" so a typo can never widen a line's eligibility.
+local function normalizeEventWindow(w)
+    if (w == "approach") or (w == "after") then return w end
+    return "active"
+end
+
 -- Wrap one authored entry (of the given kind) into the normalized item shape.
 -- `entry` is either a bare string (line) or a table; `forceChain` is true for
 -- entries coming from the duos/groups lists (so a legacy bare {"a","b"} array
@@ -526,6 +1073,9 @@ local function makeItem(kind, entry, forceChain)
             kind = kind, data = entry,
             roles = nil, moods = nil,
             areaGlobal = true, areas = {},
+            timesGlobal = true, times = {},
+            seasonsGlobal = true, seasons = {},
+            eventsGlobal = true, events = {}, eventWindow = "active",
             weight = 1, cooldown = lineCooldownTicks,
         }
     end
@@ -541,11 +1091,18 @@ local function makeItem(kind, entry, forceChain)
         data = entry[1]                          -- tagged one-liner: [1] is text
     end
 
-    local areaGlobal, areaMap = normalizeAreas(entry.areas)
+    local areaGlobal, areaMap     = normalizeAreas(entry.areas)
+    local timesGlobal, timesMap   = normalizeTimes(entry.times)
+    local seasonsGlobal, seasonsMap = normalizeSeasons(entry.seasons)
+    local eventsGlobal, eventsList = normalizeEvents(entry.events)
     return {
         kind = kind, data = data,
         roles = entry.roles, moods = entry.moods,
         areaGlobal = areaGlobal, areas = areaMap,
+        timesGlobal = timesGlobal, times = timesMap,
+        seasonsGlobal = seasonsGlobal, seasons = seasonsMap,
+        eventsGlobal = eventsGlobal, events = eventsList,
+        eventWindow = normalizeEventWindow(entry.eventWindow),
         weight = entry.weight or 1,
         cooldown = entry.cooldown or lineCooldownTicks,
     }
@@ -945,7 +1502,7 @@ end
 local globalTick = 0
 
 -- scoreLine(item, char, tick) -> number >= 0. A score of 0 means EXCLUDE
--- (only areaFactor can hard-exclude). Factors:
+-- (areaFactor and timeFactor can hard-exclude). Factors:
 --   base         = item.weight (default 1, normalized at parse time)
 --   roleFactor   = roleMoodMatchStrength when char.role matches item.roles;
 --                  1.0 when item.roles is nil (untagged = any role);
@@ -956,6 +1513,16 @@ local globalTick = 0
 --                  character's area IS in the line's area map;
 --                  else 0  -> HARD EXCLUDE (the "wouldn't make sense here" guard:
 --                  a city character never draws a battlefield-only line).
+--   timeFactor   = 1.0 when item.timesGlobal (untagged = any time of day) OR when
+--                  the time context is disabled/unavailable; else
+--                  item.times[ctx.timeKey] * timeMatchStrength when the in-game
+--                  bucket IS in the line's times map; else 0 -> HARD EXCLUDE
+--                  (a "the taverns are roaring tonight" line stays silent by day).
+--   seasonFactor = 1.0 when item.seasonsGlobal (untagged = any season) OR when
+--                  the season context is disabled/unavailable; else
+--                  item.seasons[ctx.season] * seasonMatchStrength when the in-game
+--                  season IS in the line's seasons map; else 0 -> HARD EXCLUDE
+--                  (a "the granaries are full" line stays silent outside autumn).
 --   recencyPenalty = 0 within item.cooldown ticks of its last use, then ramps
 --                  linearly back to 1.0 over the following `cooldown` ticks
 --                  (so a just-used line is suppressed, not permanently banned).
@@ -984,6 +1551,103 @@ local function areaFactor(item, char)
     return w * areaMatchStrength
 end
 
+-- timeFactor(item, ctx) -> number >= 0. EXACT parallel to areaFactor
+-- (CONTEXT_AWARE_PLAN.md "Scorer changes"):
+--   untagged `times` (timesGlobal)        => 1.0 (global, never excluded)
+--   tagged & ctx.timeKey IS in the map    => weight * timeMatchStrength (boosted)
+--   tagged & ctx.timeKey NOT in the map   => 0 -> HARD EXCLUDE
+-- Forced to 1.0 (no exclusion, today's behaviour) when the master/time flags are
+-- off OR ctx.timeKey is unavailable/neutral (e.g. GetGameTime/os.date absent), so
+-- the fallback invariant holds: a tagged line never excludes itself blindly.
+local function timeFactor(item, c)
+    if (item.timesGlobal) then return 1.0 end             -- untagged = any time
+    -- Context off or unknown -> behave like today's random selection (no exclude).
+    if (not enableContextAware) or (not enableTimeContext) then return 1.0 end
+    if (not c) or (not c.timeKey) then return 1.0 end
+    local w = c.timeKey and item.times[c.timeKey]
+    if (not w) then return 0 end                          -- HARD EXCLUDE (off-bucket)
+    return w * timeMatchStrength
+end
+
+-- seasonFactor(item, c) -> number >= 0. EXACT parallel to timeFactor
+-- (CONTEXT_AWARE_PLAN.md "Scorer changes"):
+--   untagged `seasons` (seasonsGlobal)      => 1.0 (global, never excluded)
+--   tagged & ctx.season IS in the map       => weight * seasonMatchStrength (boosted)
+--   tagged & ctx.season NOT in the map      => 0 -> HARD EXCLUDE
+-- Forced to 1.0 (no exclusion, today's behaviour) when the master/season flags are
+-- off OR ctx.season is unavailable/neutral (e.g. GetGameTime/os.date absent), so
+-- the fallback invariant holds: a tagged line never excludes itself blindly.
+local function seasonFactor(item, c)
+    if (item.seasonsGlobal) then return 1.0 end           -- untagged = any season
+    -- Context off or unknown -> behave like today's random selection (no exclude).
+    if (not enableContextAware) or (not enableSeasonContext) then return 1.0 end
+    if (not c) or (not c.season) then return 1.0 end
+    local w = c.season and item.seasons[c.season]
+    if (not w) then return 0 end                          -- HARD EXCLUDE (off-season)
+    return w * seasonMatchStrength
+end
+
+-- eventFactor(item, c) -> number (1.0 or 0). BINARY by design
+-- (CONTEXT_AWARE_PLAN.md "Scorer changes"): an event-tagged line is fundamentally
+-- ABOUT that event, so it either applies (1.0) or must not appear (0) -- no low
+-- floor, no graded boost.
+--   untagged `events` (eventsGlobal)             => 1.0 (fires regardless)
+--   flags off (master/event)                     => 1.0 (today's behaviour)
+--   ctx.active empty (API absent/unknown)        => 1.0 (NEVER exclude when we
+--                                                   can't tell what's live)
+--   tagged & ONE of the line's events is active  => 1.0 (applies)
+--   tagged & NONE of the line's events active     => 0  -> HARD EXCLUDE
+-- Phase 4 extends "applies" via eventWindow:
+--   "active" (default) -- as above (live only).
+--   "approach"         -- ALSO 1.0 when a tagged event == ctx.nextEvent.name AND
+--                         ctx.nextEvent.daysAway <= eventApproachDays.
+--   "after"            -- ALSO 1.0 when a tagged event == ctx.lastEvent.name AND
+--                         ctx.lastEvent.daysAgo <= eventAfterDays.
+-- The never-exclude-when-API-absent guard still holds: an empty ctx.active AND no
+-- schedule (nextEvent/lastEvent nil) => 1.0 (can't tell what's live or near).
+local function eventFactor(item, c)
+    if (item.eventsGlobal) then return 1.0 end            -- untagged = any/no event
+    if (not enableContextAware) or (not enableEventContext) then return 1.0 end
+
+    local active   = c and c.active
+    local liveKnown = active and (next(active) ~= nil)
+    local window   = item.eventWindow or "active"
+    -- Whether we have ANY scheduling signal for this line's window. If neither the
+    -- active set NOR the relevant nearest-event slot is known, we cannot tell ->
+    -- don't exclude (fallback invariant).
+    local nearKnown = false
+    if (window == "approach") then nearKnown = (c and c.nextEvent) ~= nil
+    elseif (window == "after") then nearKnown = (c and c.lastEvent) ~= nil end
+    if (not liveKnown) and (not nearKnown) then return 1.0 end  -- nothing to judge on
+
+    -- Active now (any window includes the live event).
+    if (liveKnown) then
+        for _, name in ipairs(item.events) do
+            if (active[name]) then return 1.0 end
+        end
+    end
+
+    -- Approach window: the line's event is the soonest-upcoming, within the lead.
+    if (window == "approach") and (c and c.nextEvent) then
+        if (c.nextEvent.daysAway <= eventApproachDays) then
+            for _, name in ipairs(item.events) do
+                if (name == c.nextEvent.name) then return 1.0 end
+            end
+        end
+    end
+
+    -- After window: the line's event is the most-recently-ended, within the tail.
+    if (window == "after") and (c and c.lastEvent) then
+        if (c.lastEvent.daysAgo <= eventAfterDays) then
+            for _, name in ipairs(item.events) do
+                if (name == c.lastEvent.name) then return 1.0 end
+            end
+        end
+    end
+
+    return 0                                              -- HARD EXCLUDE (out of window)
+end
+
 local function recencyPenalty(item, tick)
     local last = item.lastTick
     if (not last) then return 1.0 end                     -- never used
@@ -998,12 +1662,18 @@ end
 
 local function scoreLine(item, char, tick)
     local af = areaFactor(item, char)
-    if (af <= 0) then return 0 end                        -- area is the only hard-exclude
+    if (af <= 0) then return 0 end                        -- area can hard-exclude
+    local tf = timeFactor(item, ctx)
+    if (tf <= 0) then return 0 end                        -- times can hard-exclude (off-bucket)
+    local sf = seasonFactor(item, ctx)
+    if (sf <= 0) then return 0 end                        -- seasons can hard-exclude (off-season)
+    local ef = eventFactor(item, ctx)
+    if (ef <= 0) then return 0 end                        -- events can hard-exclude (none active)
     local base = item.weight or 1
     local rf   = matchFactor(item.roles, char.role)
     local mf   = matchFactor(item.moods, char.personality)
     local rp   = recencyPenalty(item, tick)
-    return base * rf * mf * af * rp
+    return base * rf * mf * af * tf * sf * ef * rp
 end
 
 -- pickLine(candidates, char, tick) -> item | nil.
@@ -1201,8 +1871,9 @@ local function cityFor(speaker)
 end
 
 -- Begin (or continue) the conversation on `channel`, drawing from `candidates`
--- voiced by `initiator` of `castFaction`. Returns rawText, speaker, audience.
--- Advances the per-channel conversation state and the global recency tick.
+-- voiced by `initiator` of `castFaction`. Returns rawText, speaker, audience,
+-- item. The trailing `item` lets the renderer honour the line's `events` tag for
+-- %event% (Phase 3). Advances the per-channel conversation state and global tick.
 local function nextLine(channel, candidates, initiator, castFaction)
     local st = t.conv[channel]
     if (not st) then st = {}; t.conv[channel] = st end
@@ -1216,7 +1887,7 @@ local function nextLine(channel, candidates, initiator, castFaction)
         st.prevName = speaker.name
         st.speaker  = speaker
         if (st.ti > #item.data) then st.item = nil end       -- chain finished
-        return item.data[ti], speaker, st.audience
+        return item.data[ti], speaker, st.audience, item
     end
 
     -- Start a fresh item for this speaker.
@@ -1231,7 +1902,7 @@ local function nextLine(channel, candidates, initiator, castFaction)
         st.audience = item.audience
         st.speaker  = initiator
         st.prevName = initiator.name
-        return item.data, initiator, item.audience
+        return item.data, initiator, item.audience, item
     end
 
     -- Duo/group: fix the cast now and emit its first line.
@@ -1243,12 +1914,88 @@ local function nextLine(channel, candidates, initiator, castFaction)
     st.speaker  = speaker
     st.ti       = 2
     st.item     = (#item.data > 1) and item or nil           -- chain or one-line
-    return item.data[1], speaker, item.audience
+    return item.data[1], speaker, item.audience, item
+end
+
+-- ---------------------------------------------------------------------------
+-- Event-activation burst (Phase 6) -- CONTEXT_AWARE_PLAN.md phased item 6 /
+-- "Event-sparked ambient bursts". Behind enableEventBurst (default false), so by
+-- default this is dead code and behaviour is byte-for-byte unchanged.
+-- ---------------------------------------------------------------------------
+-- When refreshCtx detects an event flipping INTO active, it calls fireEventBurst
+-- (forward-declared near ctx) ONCE for that activation. We REUSE the existing
+-- conversation machinery rather than building a new renderer: a short two-line
+-- duo burst item is built with makeItem (tagged with the just-activated event so
+-- %event% resolves to it -- token & tag agree), a cast is assembled, and the item
+-- is SEEDED into the per-channel t.conv state so the very next speak() tick
+-- continues it line-by-line through nextLine -- exactly like an ambient duo.
+--
+-- It is voiced as an everyone-visible (audience="shared") exchange on the
+-- "alliance" channel by an Alliance-faction cast, matching how shared lines are
+-- normally voiced (decision 5). Everything is capability-/nil-guarded: if a
+-- speaker can't be resolved, the channel already has a chain in progress, or any
+-- content/machinery is unavailable, it simply does nothing -- it never errors and
+-- never clobbers an ongoing conversation.
+
+-- Event-burst content pool (Phase 6). Read from context_map.lua with a small
+-- inline fallback so the burst works even if the data file is older/missing. Each
+-- entry is a two-line duo chain; %event% is filled at render time with the
+-- activated holiday's name.
+local eventBurstPool = (type(ctxMap.eventBurst) == "table" and #ctxMap.eventBurst > 0)
+    and ctxMap.eventBurst
+    or {
+        { "Word is %event% has begun -- did you hear?", "Aye, just now. Best get to the city." },
+        { "%event% starts today, friend.", "Then what are we waiting for? Let's go." },
+    }
+
+fireEventBurst = function(eventName)               -- assigns the forward-declared local
+    if (not enableEventBurst) then return end                -- flag guard (belt & braces)
+    if (type(eventName) ~= "string") or (eventName == "") then return end
+    if (type(eventBurstPool) ~= "table") or (#eventBurstPool == 0) then return end
+
+    local channel = "alliance"                               -- shared lines are Alliance-voiced
+    local st = t.conv[channel]
+    -- Don't clobber an in-progress duo/group chain -- the festival flavor is a
+    -- nice-to-have, never worth truncating an ongoing exchange. Seed only when the
+    -- channel is idle (no chain mid-flight).
+    if (st) and (st.item) and (st.item.kind ~= "line") then return end
+
+    -- Build a duo burst item, tagged with the activated event so %event% resolves
+    -- to it. forceChain=true so makeItem treats the {a,b} table as a chain.
+    local chain = eventBurstPool[math.random(#eventBurstPool)]
+    if (type(chain) ~= "table") or (#chain < 1) then return end
+    local item = makeItem("duo", { chain = chain, events = { eventName } }, true)
+    item.audience = "shared"                                 -- everyone-visible
+    item.lastTick = globalTick
+
+    -- Assemble a same-faction cast around a resolved Alliance speaker; reuse the
+    -- ambient cast machinery so two distinct voices trade the lines.
+    local initiator = resolveSpeaker("alliance")
+    if (not initiator) then return end                       -- no character available -> skip
+    local cast = assembleCast(initiator, item, "alliance")
+    if (type(cast) ~= "table") or (#cast < 1) then return end
+
+    -- Seed the conversation state so the NEXT speak("alliance", ...) tick continues
+    -- this chain from line 1 with its fixed cast (nextLine's "continue chain"
+    -- branch). This is the same shape nextLine itself leaves behind for a duo.
+    t.conv[channel] = {
+        item     = item,
+        cast     = cast,
+        ti       = 1,
+        prevName = nil,
+        speaker  = initiator,
+        audience = "shared",
+    }
 end
 
 -- Run the full %token% substitution on `txt` for `speaker`. (Same ~44 gsubs as
 -- before; only %city% gained the homeCity bias.)
-local function renderTokens(txt, speaker)
+-- renderTokens(txt, speaker, ctx, item) -- the trailing `ctx`/`item` are optional
+-- so existing callers keep working; when absent (or context disabled/unavailable)
+-- the context-aware tokens fall back to their random helpers (today's behaviour).
+-- `item` is the line being rendered; it lets %event% honour the line's `events`
+-- tag (token & tag agree) -- see resolveEvent.
+local function renderTokens(txt, speaker, ctx, item)
     txt = string.gsub(txt, "%%zone%%",       selectRandomZone())
     txt = string.gsub(txt, "%%instance%%",   selectRandomInstance())
     txt = string.gsub(txt, "%%role%%",       selectRandomRole())
@@ -1286,9 +2033,24 @@ local function renderTokens(txt, speaker)
     txt = string.gsub(txt, "%%gold%%",       selectRandomGold())
     txt = string.gsub(txt, "%%level%%",      selectRandomLevel())
     txt = string.gsub(txt, "%%gearscore%%",  selectRandomGearscore())
-    txt = string.gsub(txt, "%%event%%",      selectRandomEvent())
-    txt = string.gsub(txt, "%%season%%",     selectRandomSeason())
-    txt = string.gsub(txt, "%%timeofday%%",  selectRandomTimeOfDay())
+    -- %event% is context-aware (Phase 3): a tagged line resolves to its own event
+    -- (token & tag agree); else something live now (ctx.active); else random.
+    -- Phase 4 replaces the random fallback with the nearest-event reference.
+    txt = string.gsub(txt, "%%event%%",      resolveEvent(item, ctx))
+    -- %nextevent% / %lastevent% (Phase 4): explicit anticipation/aftermath naming
+    -- of the soonest-upcoming / most-recently-ended holiday; both fall back to a
+    -- neutral phrase when scheduling is unknown (never a wrong holiday).
+    txt = string.gsub(txt, "%%nextevent%%",  resolveNextEvent(ctx))
+    txt = string.gsub(txt, "%%lastevent%%",  resolveLastEvent(ctx))
+    -- %season% is context-aware (Phase 5): when context is enabled, resolve to the
+    -- in-game season (ctx.season, derived from the month + holiday cross-check);
+    -- otherwise fall back to the random helper (today's behaviour).
+    txt = string.gsub(txt, "%%season%%",     resolveSeason(ctx))
+    -- %timeofday% is context-aware (Phase 1): when context is enabled and a
+    -- timeKey pool exists, draw a display string that agrees with the in-game
+    -- clock; otherwise fall back to the random helper (today's behaviour). The
+    -- pool is inlined here for Phase 1 and moves to context_map.lua later.
+    txt = string.gsub(txt, "%%timeofday%%",  resolveTimeOfDay(ctx))
     txt = string.gsub(txt, "%%shop%%",       selectRandomShop())
     txt = string.gsub(txt, "%%route%%",      selectRandomRoute())
     txt = string.gsub(txt, "%%tale%%",       selectRandomTale())
@@ -1331,11 +2093,13 @@ end
 -- render a line from `candidates`, and route it by the line's audience tag.
 -- Returns silently if nothing can be said. The speaker color stays stable.
 local function speak(channel, candidates, castFaction)
+    refreshCtx()                                             -- cheap (TTL-guarded); keeps ctx fresh
     local initiator = resolveSpeaker(castFaction)
     if (not initiator) then return end                       -- no character available
-    local raw, speaker, audience = nextLine(channel, candidates, initiator, castFaction)
+    local raw, speaker, audience, item = nextLine(channel, candidates, initiator, castFaction)
     if (not raw) then return end
-    local body = renderTokens(raw, speaker)
+    local body = renderTokens(raw, speaker, ctx, item)
+    recordTopic(raw)                                         -- FORWARD-COMPAT no-op (chat-topic awareness)
     emit(audience, formatWorld(speaker, body))
 end
 

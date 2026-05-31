@@ -87,6 +87,18 @@ these helpers.
 | `ActiveChat/talk_text/npc_reactions.lua` | **New.** In-character reaction content keyed by category × faction. Mirrors the `{shared, alliance, horde}` shape so faction gating is consistent. |
 | `README.md` | Document the feature, config flags, and how to add reaction categories/threads — with the in-character authoring rule called out. |
 
+> **Cross-reference (context-aware chatter).** Responders read the shared `ctx`
+> table — the single source of "what's true right now" (time/season/active +
+> nearest events) populated by `refreshCtx()` in `npcTalk.lua` — so reaction
+> content can carry the same `times`/`events`/`seasons` tags and resolve
+> `%event%`/`%season%`/`%timeofday%` to the live moment. The event-activation burst
+> hook also lives in `refreshCtx()` (behind `enableEventBurst`): when an event flips
+> active it seeds a one-shot character↔character festival burst via the existing
+> conversation machinery. Wiring `ctx` into the reaction *dispatcher*
+> (`dispatch`/`advanceThread`) is straightforward once those functions exist — `ctx`
+> is module-level and already read at the top of `speak()`. See CONTEXT_AWARE_PLAN.md
+> "Tie-in: Player Interaction plan".
+
 ## Data model: `npc_reactions.lua`
 
 Author it the same way as the existing files (strings = one-liners, tables of
