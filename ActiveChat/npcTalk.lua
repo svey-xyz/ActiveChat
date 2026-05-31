@@ -549,13 +549,19 @@ local holidayToSeason = {
 -- to context_map.lua in a later phase per the plan -- TODO Phase 3/5). Each entry
 -- draws from the existing `timesofday` display vocabulary so substitution reads
 -- naturally and agrees with the clock.
+--
+-- IMPORTANT: entries are bare nouns (NO leading article) so they read correctly in
+-- the frames authored lines actually use -- "this %timeofday%", "at %timeofday%",
+-- "a whole %timeofday%", "by %timeofday%", etc. An article-led entry like
+-- "the evening" would render "this the evening" / "a whole the evening", so keep
+-- these article-free; the surrounding line supplies any article it needs.
 local timeKeyDisplay = {
-    night     = { "midnight", "nightfall", "the small hours before dawn" },
+    night     = { "midnight", "nightfall", "night" },
     dawn      = { "dawn", "first light" },
-    morning   = { "the early morning", "first light" },
+    morning   = { "morning", "first light" },
     midday    = { "midday" },
-    afternoon = { "the afternoon", "midday" },
-    dusk      = { "dusk", "twilight", "the evening" },
+    afternoon = { "afternoon", "midday" },
+    dusk      = { "dusk", "twilight", "evening" },
 }
 
 -- Real ms tick source for the refresh TTL. Prefer the server clock
@@ -1061,6 +1067,26 @@ local function normalizeEventWindow(w)
     return "active"
 end
 
+-- Normalize an authored EXCLUSION field (notTimes / notSeasons / notEvents) into a
+-- set-like membership map { key = true }. These are the NEGATIVE gate -- the mirror
+-- image of the positive times/seasons/events tags: instead of "fires ONLY in these
+-- contexts", an exclusion means "fires in ANY context EXCEPT these". Accepts the
+-- same list form ({"night"}) or map form ({night=true}) for authoring parity; any
+-- value is treated as presence (these are binary, no weights). Omitted => empty set
+-- (no exclusions). Used by excludeFactor; works even on an otherwise-global line so
+-- you can keep a line universal but carve out the one context where it can't fire
+-- (e.g. a "...and it's not even dark" joke that must never run at night).
+local function normalizeExcludeSet(field)
+    local set = {}
+    if (field == nil) then return set end       -- omitted => no exclusions
+    if (field[1] ~= nil) then
+        for _, k in ipairs(field) do set[k] = true end   -- list form
+    else
+        for k, _ in pairs(field) do set[k] = true end    -- map/set form
+    end
+    return set
+end
+
 -- Wrap one authored entry (of the given kind) into the normalized item shape.
 -- `entry` is either a bare string (line) or a table; `forceChain` is true for
 -- entries coming from the duos/groups lists (so a legacy bare {"a","b"} array
@@ -1076,6 +1102,7 @@ local function makeItem(kind, entry, forceChain)
             timesGlobal = true, times = {},
             seasonsGlobal = true, seasons = {},
             eventsGlobal = true, events = {}, eventWindow = "active",
+            notTimes = {}, notSeasons = {}, notEvents = {},
             weight = 1, cooldown = lineCooldownTicks,
         }
     end
@@ -1103,6 +1130,9 @@ local function makeItem(kind, entry, forceChain)
         seasonsGlobal = seasonsGlobal, seasons = seasonsMap,
         eventsGlobal = eventsGlobal, events = eventsList,
         eventWindow = normalizeEventWindow(entry.eventWindow),
+        notTimes   = normalizeExcludeSet(entry.notTimes),
+        notSeasons = normalizeExcludeSet(entry.notSeasons),
+        notEvents  = normalizeExcludeSet(entry.notEvents),
         weight = entry.weight or 1,
         cooldown = entry.cooldown or lineCooldownTicks,
     }
@@ -1648,6 +1678,40 @@ local function eventFactor(item, c)
     return 0                                              -- HARD EXCLUDE (out of window)
 end
 
+-- excludeFactor(item, c) -> number (1.0 or 0). The NEGATIVE gate, a standalone
+-- factor (forward-compat shape: factor(line, ctx)) covering notTimes/notSeasons/
+-- notEvents. Returns 0 (HARD EXCLUDE) when the CURRENT context lands in one of the
+-- line's exclusion sets; 1.0 otherwise. Unlike the positive factors this is checked
+-- for EVERY line (even otherwise-global ones), so a universal line can still carve
+-- out a single context it must never fire in.
+--   notTimes   -- excludes when ctx.timeKey is in the set (e.g. {"night"}).
+--   notSeasons -- excludes when ctx.season is in the set (e.g. {"winter"}).
+--   notEvents  -- excludes when any named event is ACTIVE in ctx.active.
+-- Each dimension respects its sub-flag and the fallback invariant: if context is
+-- off OR the relevant ctx value is unknown (clock/season absent, API missing), that
+-- dimension can't exclude -- never go silent on a guess. An empty set never excludes.
+local function excludeFactor(item, c)
+    if (not enableContextAware) then return 1.0 end       -- feature off => no exclusions
+    if (not c) then return 1.0 end
+
+    -- Time-of-day exclusion.
+    if (enableTimeContext) and (c.timeKey) and (item.notTimes) then
+        if (item.notTimes[c.timeKey]) then return 0 end
+    end
+    -- Season exclusion.
+    if (enableSeasonContext) and (c.season) and (item.notSeasons) then
+        if (item.notSeasons[c.season]) then return 0 end
+    end
+    -- Active-event exclusion (binary, keyed off the live event set).
+    if (enableEventContext) and (item.notEvents) and (c.active) then
+        for name, _ in pairs(item.notEvents) do
+            if (c.active[name]) then return 0 end
+        end
+    end
+
+    return 1.0
+end
+
 local function recencyPenalty(item, tick)
     local last = item.lastTick
     if (not last) then return 1.0 end                     -- never used
@@ -1669,11 +1733,13 @@ local function scoreLine(item, char, tick)
     if (sf <= 0) then return 0 end                        -- seasons can hard-exclude (off-season)
     local ef = eventFactor(item, ctx)
     if (ef <= 0) then return 0 end                        -- events can hard-exclude (none active)
+    local xf = excludeFactor(item, ctx)
+    if (xf <= 0) then return 0 end                        -- notTimes/notSeasons/notEvents can hard-exclude
     local base = item.weight or 1
     local rf   = matchFactor(item.roles, char.role)
     local mf   = matchFactor(item.moods, char.personality)
     local rp   = recencyPenalty(item, tick)
-    return base * rf * mf * af * tf * sf * ef * rp
+    return base * rf * mf * af * tf * sf * ef * xf * rp
 end
 
 -- pickLine(candidates, char, tick) -> item | nil.

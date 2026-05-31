@@ -1,4 +1,4 @@
-# Eluna Lua Script: Lively World Chat
+# ALE Script: Lively World Chat
 
 This script is for AzerothCore using Eluna Lua scripting. It fills **World chat**
 with **ambient, in-world roleplay chatter** — the kind of talk you'd overhear in a
@@ -29,7 +29,7 @@ If you expand the text, please make a pull request so we can all share in the fu
 and keep new lines in-character (no real-world references, no fourth-wall jokes).
 
 ## Installation
-- This script requires the Eluna module for your server.
+- This script requires mod-ale for your server.
 - Download the zip and extract the folder into your server's `lua_scripts` folder.
 
 ## Features
@@ -254,6 +254,7 @@ should use the `chain=` form.)
 | `events` | Event fit (binary): **omit** = fires regardless; **list** of event names = fires only while one is active (or, with `eventWindow`, in its run-up/wind-down). See "Context-aware chatter". |
 | `eventWindow` | Pairs with `events`: `"active"` (default) / `"approach"` / `"after"`. See "Context-aware chatter". |
 | `seasons` | Season fit: same list/map/hard-exclude semantics as `times`. See "Context-aware chatter". |
+| `notTimes` / `notSeasons` / `notEvents` | **Negative gate** — fires in any context **except** the ones listed (e.g. `notTimes={"night"}`). Works even on an otherwise-global line. See "Context-aware chatter". |
 | `weight` | Relative pick frequency (default `1`). Bump good generic lines up. |
 | `cooldown` | Min ticks before this exact line repeats (default `lineCooldownTicks`). Raise for distinctive lines. |
 
@@ -273,6 +274,7 @@ score = weight
       * timeFactor   (1.0 if untagged; per-bucket weight if ctx.timeKey is listed; 0 = EXCLUDE otherwise)
       * eventFactor  (1.0 if untagged; 1.0 when a tagged event applies — see eventWindow; 0 = EXCLUDE otherwise)
       * seasonFactor (1.0 if untagged; per-season weight if ctx.season is listed; 0 = EXCLUDE otherwise)
+      * excludeFactor (1.0 normally; 0 = EXCLUDE when the CURRENT time/season/active-event is in the line's notTimes/notSeasons/notEvents)
       * recencyPenalty (0 within the line's cooldown, ramping back to 1)
 ```
 
@@ -321,6 +323,7 @@ ambience untagged — that global pool is the fallback the matcher needs.
 | `events` | Event fit (**binary** — no graded form). **Omit** = fires regardless of events. A **list** of event display-names = fires **only while one of those events is active** (or, with `eventWindow`, in its approach/after window); otherwise hard-excluded. |
 | `eventWindow` | Pairs with `events`. `"active"` (default) = only while live. `"approach"` = also fire in the **N-day run-up** (`eventApproachDays`, default `5`), keyed off `%nextevent%`. `"after"` = also fire in the **N-day wind-down** (`eventAfterDays`, default `3`), keyed off `%lastevent%`. |
 | `seasons` | Season fit. Same list/map/hard-exclude semantics as `times`. Seasons: `winter` / `spring` / `summer` / `autumn`. |
+| `notTimes` / `notSeasons` / `notEvents` | **Negative gate.** The mirror of the tags above: a line fires in **any** context **except** the ones listed. Unlike the positive tags this applies even to an otherwise-global line, so you can keep a line universal and carve out the single context it must never fire in. `notTimes={"night"}` = never at night; `notSeasons={"summer"}` = never in summer; `notEvents={"Brewfest"}` = never while Brewfest is live. |
 
 ```lua
 -- night-only ambience (stays silent until evening, fires uniformly at dusk/night)
@@ -345,6 +348,10 @@ ambience untagged — that global pool is the fallback the matcher needs.
 -- harvest flavor, autumn only
 { "Good harvest this year -- the granaries are near full.",
   seasons={"autumn"}, roles={"farmer"} },
+
+-- universal line, but the joke needs daylight: never fires at night or dusk
+{ "The tavern's rowdy this %timeofday% -- two duels already, and it's not even dark.",
+  notTimes={"night","dusk"} },
 ```
 
 Event display-names must match the names in `context_map.lua` exactly (e.g.
