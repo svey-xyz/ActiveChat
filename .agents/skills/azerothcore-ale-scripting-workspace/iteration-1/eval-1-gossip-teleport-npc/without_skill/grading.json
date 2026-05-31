@@ -1,0 +1,7 @@
+{"expectations":[
+{"text":"Registers gossip hello(1) and select(2) on entry 800001","passed":false,"evidence":"Used WRONG event IDs: RegisterCreatureGossipEvent(800001,2,Hello) and (...,3,Select). Correct ids are 1=ON_HELLO, 2=ON_SELECT. As written the menu never opens."},
+{"text":"Hello builds menu via GossipMenuAddItem + GossipSendMenu","passed":true,"evidence":"3x GossipMenuAddItem + GossipSendMenu(1, creature)"},
+{"text":"Select dispatches intid and closes via GossipComplete","passed":true,"evidence":"if intid==... ; player:GossipComplete()"},
+{"text":"Teleport with plausible SW/Org coords","passed":true,"evidence":"Teleport(0,-8833.38,...) and Teleport(1,1633.33,...)"},
+{"text":"Repair uses real durability method","passed":true,"evidence":"DurabilityRepairAll(false,0,false)"},
+{"text":"Leading event param, real methods","passed":true,"evidence":"callbacks include event; methods real (but registered under wrong event ids)"}]}

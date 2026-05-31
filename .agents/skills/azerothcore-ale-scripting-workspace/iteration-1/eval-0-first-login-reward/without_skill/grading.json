@@ -1,0 +1,7 @@
+{"expectations":[
+{"text":"Registers ON_FIRST_LOGIN (30) via RegisterPlayerEvent","passed":true,"evidence":"RegisterPlayerEvent(30, OnFirstLogin)"},
+{"text":"Callback first param event, second player","passed":true,"evidence":"function OnFirstLogin(event, player)"},
+{"text":"5 gold via copper math","passed":true,"evidence":"FIRST_LOGIN_GOLD=50000 commented as 5 gold"},
+{"text":"AddItem(6948,1)","passed":true,"evidence":"player:AddItem(HEARTHSTONE_ENTRY,...) =6948"},
+{"text":"Welcome message includes GetName()","passed":true,"evidence":"uses local name = player:GetName()"},
+{"text":"Single valid .lua, no invented methods","passed":true,"evidence":"real methods; offers Whisper alt"}]}

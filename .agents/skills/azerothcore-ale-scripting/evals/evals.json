@@ -1,0 +1,50 @@
+{
+  "skill_name": "azerothcore-ale-scripting",
+  "evals": [
+    {
+      "id": 0,
+      "name": "first-login-reward",
+      "prompt": "Write an Eluna lua script for my AzerothCore server: the first time a player ever logs in on a character, give them 5 gold and a Hearthstone (item 6948), and whisper them a welcome message with their name. Save it as a single .lua file.",
+      "expected_output": "A .lua file registering PLAYER_EVENT_ON_FIRST_LOGIN (event 30) via RegisterPlayerEvent, callback signature function(event, player), uses player:ModifyMoney(50000) for 5 gold (copper), player:AddItem(6948, 1), and a welcome message via SendBroadcastMessage/Whisper using player:GetName().",
+      "files": [],
+      "assertions": [
+        {"text": "Registers the first-login hook via RegisterPlayerEvent with event id 30 (ON_FIRST_LOGIN), not ON_LOGIN"},
+        {"text": "Callback's first parameter is `event`, second is the player (function(event, player))"},
+        {"text": "Grants 5 gold using copper math (ModifyMoney(50000) or equivalent 5*10000), not ModifyMoney(5)"},
+        {"text": "Adds the Hearthstone with player:AddItem(6948, 1)"},
+        {"text": "Sends a welcome message that includes the player name via player:GetName()"},
+        {"text": "Output is a single valid .lua file with no invented/non-existent ALE methods"}
+      ]
+    },
+    {
+      "id": 1,
+      "name": "gossip-teleport-npc",
+      "prompt": "I have a custom NPC in AzerothCore with creature_template entry 800001. Write the Eluna lua so that talking to it opens a gossip menu with three options: teleport to Stormwind, teleport to Orgrimmar, and repair all my gear. Make the menu close after picking an option.",
+      "expected_output": "Lua using RegisterCreatureGossipEvent(800001, 1, ...) for GOSSIP_EVENT_ON_HELLO building the menu with player:GossipMenuAddItem and player:GossipSendMenu, and RegisterCreatureGossipEvent(800001, 2, ...) for GOSSIP_EVENT_ON_SELECT dispatching on intid: Teleport to SW/Org coords, DurabilityRepairAll for repair, and player:GossipComplete() to close.",
+      "files": [],
+      "assertions": [
+        {"text": "Registers both gossip hello (event 1) and select (event 2) via RegisterCreatureGossipEvent keyed on entry 800001"},
+        {"text": "Hello handler builds menu with player:GossipMenuAddItem(...) and shows it with player:GossipSendMenu(...)"},
+        {"text": "Select handler dispatches on intid and calls player:GossipComplete() (or GossipSendMenu) to close the window"},
+        {"text": "Teleport uses player:Teleport(mapId, x, y, z, o) with plausible Stormwind and Orgrimmar coordinates"},
+        {"text": "Repair option uses a real durability method (e.g. DurabilityRepairAll), not an invented one"},
+        {"text": "All callbacks include the leading `event` parameter and use only real ALE methods"}
+      ]
+    },
+    {
+      "id": 2,
+      "name": "gm-heal-command",
+      "prompt": "Make a custom chat command .heal for AzerothCore using Eluna. It should fully heal the player who types it and their current target, but only work if the player is a GM. If they aren't a GM, do nothing special. Give me the lua file.",
+      "expected_output": "Lua registering PLAYER_EVENT_ON_COMMAND (42) via RegisterPlayerEvent, callback function(event, player, command). Checks command == 'heal', verifies player and player:IsGM(), heals player to GetMaxHealth, heals player:GetSelection() target if present, and returns false to consume the command.",
+      "files": [],
+      "assertions": [
+        {"text": "Registers PLAYER_EVENT_ON_COMMAND (event 42) via RegisterPlayerEvent"},
+        {"text": "Callback signature is function(event, player, command) and matches command == 'heal'"},
+        {"text": "Gates the action behind player:IsGM()"},
+        {"text": "Heals the caster to full using SetHealth(GetMaxHealth()) or equivalent"},
+        {"text": "Heals the target obtained via player:GetSelection(), with a nil check before use"},
+        {"text": "Returns false when the command is handled so the core does not report an unknown command"}
+      ]
+    }
+  ]
+}

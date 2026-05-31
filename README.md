@@ -20,14 +20,14 @@ anyone else online.
 - **Three conversation shapes** — standalone one-liners, two-person back-and-forth, and
   multi-voice group discussions.
 - **Faction-aware** — lines go to everyone (`shared`) or one faction (`alliance` /
-  `horde`), each with its own capital-city flavor.
+  `horde`), each with its own capital-city flavour.
 - **Easy to extend** — all content lives in plain Lua tables; add lines without touching
   the engine. → [docs/authoring.md](docs/authoring.md)
 
 It's **deliberately not an imitation of real players**: no gearscore spam, no auction
 adverts, no out-of-character meta. Every line stays inside the fiction — Azeroth is real
 to these voices. If you want player-like behavior (LFG, trade, raid logistics), pair this
-with a playerbot module; this script is for *flavor and atmosphere.*
+with a playerbot module; this script is for *flavour and atmosphere.*
 
 ## Installation
 

@@ -2,18 +2,12 @@
   Lively World Chat -- faction-gated edition.
 
   Content lives in talk_text/npc_text.lua, returning three pools:
-      shared   -> broadcast to EVERYONE        (SendWorldMessage)
-      alliance -> sent only to Alliance players (GetPlayersInWorld(0))
-      horde    -> sent only to Horde players    (GetPlayersInWorld(1))
+      shared   -> everyone (SendWorldMessage)   alliance -> team 0   horde -> team 1
+  enableFactionChat = false merges all three and broadcasts to everyone (legacy).
 
-  Set enableFactionChat = false to fall back to the old behaviour, where every
-  line (shared + alliance + horde merged) is broadcast to all players.
-
-  Voice: this is CIVILIAN / GUARD / NPC ambience, not an imitation of real
-  players. Lines should sound like a living city -- gossip, weather, work, rumor,
-  lore -- never LFG/LFM, grouping requests, or gearscore/parse talk. The
-  %role%/%difficulty%/%gearscore% tokens exist only for the rare adventurer
-  voice; prefer the world/flavor tokens. See talk_text/npc_text.lua header.
+  Voice: civilian/guard/NPC ambience -- gossip, weather, work, rumor, lore. Never
+  LFG/LFM or gearscore talk. %role%/%difficulty%/%gearscore% are for the rare
+  adventurer voice only; prefer world/flavor tokens. See npc_text.lua header.
 ]]--
 
 local enableScript      = true  -- master on/off
@@ -37,11 +31,8 @@ local homeCityBias            = true  -- bias %city% toward the speaker's home c
 local roleMoodMatchStrength   = 3.0   -- how hard role/mood matching is weighted (1 = off)
 local areaMatchStrength       = 3.0   -- how hard area matching is weighted (1 = off)
 
--- Context-aware chatter config (CONTEXT_AWARE_PLAN.md "Config additions"). The
--- full flag set is declared up front -- the later phases reuse it -- but Phase 1
--- only acts on enableContextAware/enableTimeContext + contextRefreshMs. When a
--- flag is off (or an API is missing) the matching dimension falls back to today's
--- random behaviour: no silent characters, no errors.
+-- Context-aware chatter config. When a flag is off (or its API is missing) that
+-- dimension falls back to random behaviour -- no silent characters, no errors.
 local enableContextAware   = true    -- master switch for the whole feature
 local enableTimeContext    = true    -- in-game-clock-aware times + %timeofday%
 local enableEventContext   = true    -- active-event gating + %event% (Phase 3+)
@@ -51,7 +42,7 @@ local seasonMatchStrength  = 3.0     -- like areaMatchStrength; 1 = off (Phase 5
 local contextRefreshMs     = 60000   -- ctx cache TTL (ms)
 local eventApproachDays    = 5       -- "approach" window before an event starts (Phase 4)
 local eventAfterDays       = 3       -- "after" window once an event ends (Phase 4)
-local enableEventBurst     = false   -- one-shot "festival has begun" burst on activation (Phase 6)
+local enableEventBurst     = false   -- one-shot "festival has begun" burst on activation
 
 local ns = ""
 -- Optional: a WorldDBQuery string to source NPC names from the DB.
@@ -455,47 +446,31 @@ local function selectRandomRoute()        return routes[math.random(#routes)] en
 local function selectRandomTale()         return tales[math.random(#tales)] end
 local function selectRandomWeather()      return weathers[math.random(#weathers)] end
 
--- Context vocabulary/maps (CONTEXT_AWARE_PLAN.md "Files"). Same require
--- mechanism as npc_text/npc_name (ALE sets up the module path). Phase 3 uses
--- ctxMap.eventIdToName (game_event ID -> holiday display name); later phases add
--- month->season / timeKey->display here. Guarded so a missing/broken file never
--- errors -- the engine simply falls back to today's random behaviour.
+-- Context vocabulary/maps from context_map.lua (eventIdToName, monthToSeason,
+-- eventNeutral, eventBurst). Guarded so a missing/broken file falls back to random.
 local ctxMap = {}
 do
     local ok, m = pcall(require, "context_map")
     if (ok and type(m) == "table") then ctxMap = m end
 end
 
--- ---------------------------------------------------------------------------
--- Context-aware chatter (CONTEXT_AWARE_PLAN.md). Phase 1: time only.
--- ---------------------------------------------------------------------------
--- A single module-level cache of "what's true right now", refreshed on a slow
--- TTL cadence (never recomputed per candidate line). Phase 1 populates only the
--- time fields (hour/timeKey/refreshed); the rest hold their neutral defaults and
--- are filled in by later phases. The commented `topic` slot is a forward-compat
--- reservation for future chat-topic awareness (see plan "Forward-compat").
+-- Single module-level cache of "what's true right now", refreshed on a slow TTL
+-- (never recomputed per candidate line). Fields default to neutral values.
 local ctx = {
     hour      = 0,          -- in-game hour 0..23 (from GetGameTime)
     timeKey   = "night",    -- bucketed: "dawn"|"morning"|"midday"|"afternoon"|"dusk"|"night"
-    season    = "spring",   -- derived from in-game month (Phase 5)
-    active    = {},         -- set-like ACTIVE event names (Phase 3)
-    nextEvent = nil,        -- { name=..., daysAway=N } soonest upcoming (Phase 4)
-    lastEvent = nil,        -- { name=..., daysAgo=N }  most recently ended (Phase 4)
-    -- topic  = nil,        -- FORWARD-COMPAT: last chat topic (deferred; see Tie-in)
+    season    = "spring",   -- derived from in-game month
+    active    = {},         -- set-like ACTIVE event names
+    nextEvent = nil,        -- { name=..., daysAway=N } soonest upcoming
+    lastEvent = nil,        -- { name=..., daysAgo=N }  most recently ended
     refreshed = 0,          -- ms tick of last refresh
 }
 
--- Event-activation burst state (Phase 6) -- CONTEXT_AWARE_PLAN.md phased item 6 /
--- "Event-sparked ambient bursts". All dead unless enableEventBurst is on.
---   ctxActivePrev  -- snapshot of the LAST refresh's active-event name set. The
---                     fresh set is diffed against this to detect events that just
---                     transitioned into active (once per activation, naturally).
---   ctxActiveSeeded-- false until the FIRST refresh seeds ctxActivePrev. The first
---                     refresh only records the snapshot (no bursts) so already-
---                     active holidays at startup don't all fire bursts at once.
--- fireEventBurst is forward-declared here (a local) so refreshCtx -- defined just
--- below -- can call it, while its body (which needs t.conv / assembleCast /
--- makeItem, all defined much later) is assigned further down the file.
+-- Event-burst state (dead unless enableEventBurst). ctxActivePrev = last refresh's
+-- active-event set, diffed against the fresh set to fire once per activation;
+-- ctxActiveSeeded guards the first refresh (snapshot only, no startup burst flood).
+-- fireEventBurst is forward-declared so refreshCtx can call it; its body (needs
+-- t.conv/assembleCast/makeItem) is assigned later in the file.
 local ctxActivePrev   = {}
 local ctxActiveSeeded = false
 local fireEventBurst                 -- assigned after the conversation machinery
@@ -512,11 +487,8 @@ local function bucketHour(h)
     return "night"
 end
 
--- monthToSeason(month) -> "winter"|"spring"|"summer"|"autumn" | nil. Looks up the
--- in-game month (1..12) in ctxMap.monthToSeason (CONTEXT_AWARE_PLAN.md decision 4),
--- with a northern-hemisphere inline fallback if the data file is older/missing so
--- the engine still works standalone. Nil-safe: a non-number / out-of-range month
--- (or a table that somehow lacks the key) returns nil and ctx.season stays neutral.
+-- month (1..12) -> season name, from ctxMap.monthToSeason with a northern-hemisphere
+-- inline fallback. Nil-safe: a bad/out-of-range month returns nil (ctx.season stays neutral).
 local monthToSeasonMap = (type(ctxMap.monthToSeason) == "table")
     and ctxMap.monthToSeason
     or {
@@ -529,13 +501,9 @@ local function monthToSeason(month)
     return monthToSeasonMap[month]
 end
 
--- Holiday display-name -> season cross-check (CONTEXT_AWARE_PLAN.md decision 4).
--- After deriving the season from the month we sanity-check it against any active
--- seasonal holiday so the calendar and the holiday never disagree: e.g. if Winter
--- Veil is live it is winter regardless of any month-map edge case. Keys are the
--- EXACT display names from ctxMap.eventIdToName; only holidays with an
--- unambiguous season are listed (Darkmoon Faire, fishing derbies, etc. are
--- season-neutral and intentionally omitted).
+-- Holiday -> season cross-check: an active seasonal holiday overrides the month-
+-- derived season so calendar and holiday never disagree (Winter Veil => winter).
+-- Keys are EXACT eventIdToName display names; season-neutral holidays are omitted.
 local holidayToSeason = {
     ["Winter Veil"]                 = "winter",
     ["the Midsummer Fire Festival"] = "summer",
@@ -545,16 +513,9 @@ local holidayToSeason = {
     ["the Lunar Festival"]          = "spring",
 }
 
--- timeKey -> display-string pool for %timeofday% (Phase 1 inline; this pool moves
--- to context_map.lua in a later phase per the plan -- TODO Phase 3/5). Each entry
--- draws from the existing `timesofday` display vocabulary so substitution reads
--- naturally and agrees with the clock.
---
--- IMPORTANT: entries are bare nouns (NO leading article) so they read correctly in
--- the frames authored lines actually use -- "this %timeofday%", "at %timeofday%",
--- "a whole %timeofday%", "by %timeofday%", etc. An article-led entry like
--- "the evening" would render "this the evening" / "a whole the evening", so keep
--- these article-free; the surrounding line supplies any article it needs.
+-- timeKey -> display-string pool for %timeofday%, agreeing with the clock.
+-- IMPORTANT: bare nouns, NO leading article -- lines supply their own ("this
+-- %timeofday%", "at %timeofday%"). "the evening" would render "this the evening".
 local timeKeyDisplay = {
     night     = { "midnight", "nightfall", "night" },
     dawn      = { "dawn", "first light" },
@@ -564,10 +525,8 @@ local timeKeyDisplay = {
     dusk      = { "dusk", "twilight", "evening" },
 }
 
--- Real ms tick source for the refresh TTL. Prefer the server clock
--- (GetGameTime() is seconds on ALE); fall back to os.time() (also seconds, the
--- convention already used for math.randomseed). Both are capability-guarded so an
--- absent API never errors -- nowMs() always returns a sane monotonic-ish value.
+-- ms tick source for the refresh TTL. Prefer GetGameTime() (seconds on ALE),
+-- fall back to os.time(). Capability-guarded -- always returns a sane value.
 local function nowMs()
     if (type(GetGameTime) == "function") then
         local ok, secs = pcall(GetGameTime)
@@ -576,12 +535,9 @@ local function nowMs()
     return os.time() * 1000
 end
 
--- activeEventNameSet() -> set-like { [displayName]=true } of currently-active
--- holiday/world events (CONTEXT_AWARE_PLAN.md "Active events"). Capability-guarded
--- once: if GetActiveGameEvents() is missing or the call fails, returns {} so the
--- engine falls back (eventFactor stays 1.0 -> never excludes; %event% uses its
--- random helper). Maps each active game_event ID through ctxMap.eventIdToName;
--- IDs with no display-name mapping (PvP/AQ/internal events) are skipped.
+-- Set { [displayName]=true } of currently-active events, via GetActiveGameEvents()
+-- mapped through ctxMap.eventIdToName (unmapped IDs skipped). Returns {} if the API
+-- is absent (engine then never excludes on events and %event% goes random).
 local function activeEventNameSet()
     local set = {}
     if (type(GetActiveGameEvents) ~= "function") then return set end
@@ -595,38 +551,25 @@ local function activeEventNameSet()
     return set
 end
 
--- ---------------------------------------------------------------------------
--- Nearest-event scheduling (Phase 4) -- CONTEXT_AWARE_PLAN.md decision 3.
--- ---------------------------------------------------------------------------
--- We read the game_event SCHEDULE once at startup and cache it, then compute the
--- soonest-upcoming / most-recently-ended holiday per refresh as cheap arithmetic
--- over that snapshot (no per-line cost). game_event semantics (AC 3.3.5):
---   start_time -- timestamp the event first occurs (seconds; read via
---                 UNIX_TIMESTAMP so ALE yields a clean integer, not a datetime).
---   length     -- MINUTES the event lasts each occurrence.
---   occurence  -- MINUTES between repeats (recurring holidays cycle on this).
--- Only IDs that map to a display name (ctxMap.eventIdToName) are kept -- the rest
--- are never an ambient-chatter subject.
+-- Nearest-event scheduling. Read the game_event schedule once at startup, then
+-- compute soonest-upcoming / most-recently-ended per refresh as cheap arithmetic
+-- over the snapshot. game_event cols (AC 3.3.5): start_time (sec, via
+-- UNIX_TIMESTAMP), length (min), occurence (min between repeats; 0 = one-shot).
+-- Only IDs mapping to a display name are kept.
 
 local DAY_SECONDS = 86400
 
--- Horizon (days) past which we DON'T surface an event as "near". If nothing is
--- within this window, the matching slot stays nil and %event% uses the neutral
--- phrase pool rather than naming a far-off holiday as "soon". A holiday cycle is
--- typically a year, so ~30 days keeps "approach/aftermath" honest.
+-- Days past which an event is no longer surfaced as "near" -- beyond this the slot
+-- stays nil and %event% uses the neutral pool rather than naming a far-off holiday.
 local NEAREST_HORIZON_DAYS = 30
 
--- Module-level schedule snapshot: array of { id, name, startSec, lengthSec,
--- occurSec }. Empty when WorldDBQuery is absent or the read fails -- in which case
--- nearestEvents() returns nil/nil and %event% falls back to the neutral pool.
+-- Schedule snapshot: array of { id, name, startSec, lengthSec, occurSec }. Empty
+-- when WorldDBQuery is absent/fails -> nearestEvents() returns nil/nil.
 local eventSchedule = {}
 
--- readEventSchedule() -- one-shot startup read of the game_event schedule.
--- Capability-guarded once on WorldDBQuery; iterates the ALEQuery result via the
--- documented API (GetRowCount/GetUInt32/NextRow, columns 0-indexed). start_time
--- is selected through UNIX_TIMESTAMP() so it arrives as integer seconds. Any
--- unexpected result shape is swallowed by pcall so a surprise never errors the
--- module load -- the snapshot simply stays empty (neutral fallback).
+-- One-shot startup read of the game_event schedule. Guarded on WorldDBQuery and
+-- wrapped in pcall so an absent API or odd result shape leaves the snapshot empty
+-- rather than erroring. ALEQuery API: GetRowCount/GetUInt32/NextRow, 0-indexed cols.
 local function readEventSchedule()
     if (type(WorldDBQuery) ~= "function") then return {} end
     local map = ctxMap.eventIdToName or {}
@@ -664,17 +607,11 @@ end
 
 eventSchedule = readEventSchedule()
 
--- nearestEvents(now) -> nextEvent, lastEvent (each {name=, daysAway/daysAgo=} or
--- nil). `now` is the current game timestamp in SECONDS (GetGameTime()). For each
--- scheduled holiday we project its recurrence cycle:
---   * a NON-recurring event (occurSec == 0) contributes its single window.
---   * a RECURRING event repeats every occurSec; we find the cycle index k around
---     `now`, giving the most recent past start and the next future start (this is
---     where the year-WRAP case is handled -- the "next start" is simply the next
---     cycle's start). occurence > length, so windows never overlap.
--- We keep the soonest upcoming start (>= now) as nextEvent and the most recent
--- end (<= now) as lastEvent. Day-offsets are capped to NEAREST_HORIZON_DAYS; a
--- slot with nothing inside the horizon is left nil so %event% stays neutral.
+-- nearestEvents(now_sec) -> nextEvent, lastEvent (each {name=, daysAway/daysAgo=}
+-- or nil). Projects each holiday's recurrence cycle around `now` (recurring events
+-- repeat every occurSec, which handles the year-wrap; occurence > length so windows
+-- never overlap), keeps the soonest future start and most recent past end, both
+-- capped to NEAREST_HORIZON_DAYS (else nil -> neutral).
 local function nearestEvents(now)
     if (type(now) ~= "number") or (#eventSchedule == 0) then return nil, nil end
     local horizonSec = NEAREST_HORIZON_DAYS * DAY_SECONDS
@@ -734,9 +671,8 @@ local function nearestEvents(now)
     return nextEvent, lastEvent
 end
 
--- TTL-guarded context refresh. Phase 1 only resolves the in-game hour ->
--- timeKey, guarding GetGameTime + os.date so a missing API leaves ctx.timeKey
--- neutral and the engine falls back to random. Respects the master/time flags.
+-- TTL-guarded refresh of ctx (time, events, season). Each dimension is flag- and
+-- API-guarded; a missing clock/API leaves that field neutral and falls back to random.
 local function refreshCtx()
     local now = nowMs()
     if (now - ctx.refreshed < contextRefreshMs) then return end   -- common path: cheap early-exit
@@ -744,10 +680,9 @@ local function refreshCtx()
 
     if (not enableContextAware) then return end
 
-    -- Time + season share ONE os.date decomposition of the GetGameTime() seconds
-    -- timestamp (os.date here is a *decomposition* of the game timestamp, never a
-    -- surfaced real date). Capability-guard the API so an absent clock leaves both
-    -- timeKey and season neutral. t.hour drives the time block; t.month the season.
+    -- Time + season share ONE os.date decomposition of the GetGameTime() timestamp
+    -- (a decomposition of the game clock, never a real date). API-guarded so an
+    -- absent clock leaves both neutral. t.hour drives time; t.month drives season.
     local t
     if ((enableTimeContext or enableSeasonContext)
         and type(GetGameTime) == "function" and type(os.date) == "function") then
@@ -762,21 +697,15 @@ local function refreshCtx()
         -- else: leave ctx.timeKey at its prior/neutral value; %timeofday% falls back.
     end
 
-    -- Active events (Phase 3): set-like { ["Hallow's End"]=true, ... }. Empty {}
-    -- when the API is absent/unavailable, so eventFactor never excludes blindly
-    -- and %event% falls back. Guarded by the event sub-flag. Populated BEFORE the
-    -- season block so the holiday cross-check (below) reads the fresh active set.
+    -- Active events: set { ["Hallow's End"]=true, ... }, empty when the API is
+    -- absent. Populated BEFORE the season block so its holiday cross-check sees it.
     if (enableEventContext) then
         ctx.active = activeEventNameSet()
 
-        -- Event-activation burst (Phase 6): diff the fresh active set against the
-        -- previous-refresh snapshot to detect events that just flipped INTO active,
-        -- and fire a one-shot festival burst for each (behind enableEventBurst).
-        -- The previous-set diff gives once-per-activation for free: a still-active
-        -- event is in BOTH sets, so it never re-fires on a later refresh. The very
-        -- first refresh only seeds the snapshot (ctxActiveSeeded guard) so holidays
-        -- already live at startup don't all burst at once. fireEventBurst is fully
-        -- nil-safe and flag-guarded; if any machinery is unavailable it no-ops.
+        -- Burst: diff the fresh active set against the previous snapshot to fire a
+        -- one-shot festival burst for each newly-active event (once per activation,
+        -- since a still-active event sits in both sets). First refresh only seeds
+        -- the snapshot (ctxActiveSeeded) so startup holidays don't all burst at once.
         if (enableEventBurst and fireEventBurst) then
             if (ctxActiveSeeded) then
                 for name, _ in pairs(ctx.active) do
@@ -791,11 +720,8 @@ local function refreshCtx()
             ctxActivePrev = snap                            -- store AFTER diffing
         end
 
-        -- Nearest events (Phase 4): soonest-upcoming / most-recently-ended holiday
-        -- computed over the cached game_event snapshot. nil-safe -- when the
-        -- schedule is absent (WorldDBQuery missing) nearestEvents returns nil/nil
-        -- and %event%/%nextevent%/%lastevent% use the neutral phrase pool. Reads
-        -- the raw game-time seconds (GetGameTime) when available, else os.time.
+        -- Nearest events over the cached schedule. nil-safe (absent schedule ->
+        -- neutral pool). Uses raw game-time seconds when available, else os.time.
         local nowSec
         if (type(GetGameTime) == "function") then
             local ok, secs = pcall(GetGameTime)
@@ -805,13 +731,9 @@ local function refreshCtx()
         ctx.nextEvent, ctx.lastEvent = nearestEvents(nowSec)
     end
 
-    -- Season (Phase 5): derive from the in-game MONTH via monthToSeason, then
-    -- cross-check against any active seasonal holiday so the calendar and the
-    -- holidays never disagree (decision 4) -- e.g. Winter Veil active => winter
-    -- even in a summer month. When the clock is absent or the month doesn't map,
-    -- leave ctx.season at its prior/neutral value so seasonFactor falls back to
-    -- 1.0 and %season% uses its random helper. ctx.active is already refreshed
-    -- above (when enableEventContext), so the cross-check sees the live holidays.
+    -- Season: derive from the in-game month, then let any active seasonal holiday
+    -- override it (Winter Veil active => winter even in a summer month). Absent clock
+    -- or unmapped month leaves ctx.season neutral (%season% goes random).
     if (enableSeasonContext and t and type(t.month) == "number") then
         local season = monthToSeason(t.month)
         if (season) then ctx.season = season end
@@ -824,14 +746,11 @@ local function refreshCtx()
     end
 end
 
--- recordTopic(line) -- FORWARD-COMPAT no-op stub (plan "Forward-compat
--- checklist"). The emit path calls this so wiring a real chat-topic ring buffer
--- later is a one-function change, not a hunt through the renderer.
+-- FORWARD-COMPAT no-op: the emit path calls this so wiring a real chat-topic
+-- buffer later is a one-function change.
 local function recordTopic(line) end
 
--- Resolve %timeofday% from context when available; else random fallback. Context
--- is "available" when the master + time flags are on AND we have a pool for the
--- current ctx.timeKey (which stays neutral when GetGameTime/os.date are absent).
+-- Resolve %timeofday% from context (flags on + a pool for ctx.timeKey), else random.
 local function resolveTimeOfDay(c)
     if (enableContextAware and enableTimeContext and c and c.timeKey) then
         local pool = timeKeyDisplay[c.timeKey]
@@ -840,11 +759,8 @@ local function resolveTimeOfDay(c)
     return selectRandomTimeOfDay()                          -- fallback: today's behaviour
 end
 
--- Resolve %season% from context when available; else random fallback (parallel to
--- resolveTimeOfDay). Context is "available" when the master + season flags are on
--- AND ctx.season is set (it stays neutral when GetGameTime/os.date are absent, in
--- which case we keep today's random behaviour). ctx.season is already a fiction
--- word ("spring"|"summer"|"autumn"|"winter") so it substitutes directly.
+-- Resolve %season% from context (flags on + ctx.season set), else random. ctx.season
+-- is already a fiction word ("spring"|...) so it substitutes directly.
 local function resolveSeason(c)
     if (enableContextAware and enableSeasonContext and c and c.season) then
         return c.season
@@ -852,10 +768,8 @@ local function resolveSeason(c)
     return selectRandomSeason()                             -- fallback: today's behaviour
 end
 
--- Neutral event phrase pool (Phase 4): festival-agnostic wording used when no
--- real holiday is active/near (or the schedule is unknown), so a character never
--- names a specific holiday out of context. Sourced from context_map.lua with a
--- small inline fallback if the data file is missing/older.
+-- Festival-agnostic phrases used when no real holiday is active/near, so a character
+-- never names a specific holiday out of context. From context_map.lua + inline fallback.
 local eventNeutralPool = (type(ctxMap.eventNeutral) == "table" and #ctxMap.eventNeutral > 0)
     and ctxMap.eventNeutral
     or { "the next festival", "the holidays", "the coming festivities" }
@@ -863,18 +777,12 @@ local function selectNeutralEvent()
     return eventNeutralPool[math.random(#eventNeutralPool)]
 end
 
--- Resolve %event% to the MOST RELEVANT real event (CONTEXT_AWARE_PLAN.md
--- "Context-aware substitution"), in priority order. `item` is the line being
--- rendered (may be nil); `c` is the context.
---   1. if the line has an `events` tag -> the tagged event name (tag WINS, so the
---      token and the line's eligibility always agree). With multiple tagged
---      events, prefer one that is actually active; else the first tagged name.
---   2. else an entry from c.active (something live right now).
---   3. else (Phase 4) the NEAREST event in time: c.nextEvent (preferred) then
---      c.lastEvent.
---   4. else a NEUTRAL phrase ("the next festival"). NEVER a random specific
---      holiday -- a character only ever names a holiday that is active, imminent,
---      or just past.
+-- Resolve %event% to the most relevant real event, in priority order:
+--   1. the line's `events` tag (tag WINS so token & eligibility agree; prefer an
+--      active tagged event, else the first tagged name).
+--   2. else something live now (c.active).
+--   3. else the nearest event in time: c.nextEvent then c.lastEvent.
+--   4. else a neutral phrase -- NEVER a random specific holiday.
 local function resolveEvent(item, c)
     if (enableContextAware and enableEventContext) then
         -- 1. tagged line: the tag's event wins (prefer an active one).
@@ -900,10 +808,8 @@ local function resolveEvent(item, c)
     return selectNeutralEvent()
 end
 
--- Resolve %nextevent% / %lastevent% (Phase 4). These name the soonest-upcoming /
--- most-recently-ended holiday for explicit anticipation/aftermath lines; both
--- fall back to the neutral phrase pool when scheduling is unknown (or context
--- disabled), so they never name a wrong holiday.
+-- Resolve %nextevent% / %lastevent% to the soonest-upcoming / most-recently-ended
+-- holiday; both fall back to the neutral pool when scheduling is unknown.
 local function resolveNextEvent(c)
     if (enableContextAware and enableEventContext and c and c.nextEvent and c.nextEvent.name) then
         return c.nextEvent.name
@@ -932,49 +838,21 @@ local function selectRandomGearscore()  return tostring(math.random(240, 600) * 
 -- Load content pools --------------------------------------------------------
 local world = require("npc_text")        -- { shared/alliance/horde = {lines,duos,groups} }
 
--- ---------------------------------------------------------------------------
--- Tagged-content parser (Phase 3).
--- ---------------------------------------------------------------------------
--- buildItems flattens one or more typed pools ({lines, duos, groups}) into a
--- single cursored item list. Every item is tagged with its `kind` so the state
--- machine knows how to cast it: "line" = single speaker, "duo" = 2 alternating
--- speakers, "group" = a rotating cast of several voices. Cursor [0] holds
--- {itemIndex, lineIndex, ...} and is preserved as before.
+-- Tagged-content parser. buildItems flattens typed pools ({lines, duos, groups})
+-- into one cursored item list, each tagged with its `kind`: "line" (single
+-- speaker), "duo" (2 alternating), "group" (rotating cast). Cursor [0] preserved.
 --
--- Each authored entry may be (BACK-COMPATIBLY — see CHARACTERS_PLAN
--- "Authoring shape" / "Migration mechanics"):
---   * a bare string                -> untagged item (global wildcard).
---   * a table with [1] and no chain -> a tagged one-liner; [1] is the text and
---                                      named keys (roles/moods/areas/weight/
---                                      cooldown) are metadata.
---   * a table with chain={...}      -> a tagged duo/group; data = the chain
---                                      array, plus optional tags.
---   * a legacy {"a","b",...} array  -> an UNTAGGED chain (no `chain` key); the
---                                      whole array IS the chain. Detected by:
---                                      it came from the duos/groups list AND its
---                                      [1] is a string.
+-- Authored entries (back-compatible):
+--   * bare string            -> untagged line (global wildcard)
+--   * table {[1]=text, ...}   -> tagged one-liner; named keys are metadata
+--   * table {chain={...}, ...} -> tagged duo/group
+--   * legacy {"a","b",...}    -> untagged chain (from the duos/groups list, [1] a string)
 --
--- NORMALIZED INTERNAL ITEM SHAPE (relied on by Phase 4 + Phase 5):
---   item = {
---     kind      = "line" | "duo" | "group",
---     data      = <string>            for kind=="line"
---               | <array of strings>  for kind=="duo"/"group" (the chain),
---     roles     = <array of role keys> or nil  (nil = any role),
---     moods     = <array of mood keys> or nil  (nil = any personality),
---     areaGlobal= <bool>,             true  => fits ANY area (areas omitted),
---     areas     = <map area->weight>, ALWAYS a map (never a list) when
---                                     areaGlobal is false; areas absent from the
---                                     map are EXCLUDED. When areaGlobal is true
---                                     this is an empty map {} (ignored).
---     weight    = <number>,           base pick weight (default 1),
---     cooldown  = <number>,           min ticks before repeat (default
---                                     lineCooldownTicks),
---   }
--- The `areas` field is normalized AT PARSE TIME from any of: omitted
--- (=> areaGlobal=true, areas={}), a list {"city","rural"} (=> uniform weight 1
--- per listed area, areaGlobal=false), or a map {battlefield=3, rural=1}
--- (=> copied as-is, areaGlobal=false). Phase 4 reads areaGlobal/areas
--- uniformly: global => areaFactor 1.0; otherwise areas[char.area] or EXCLUDE.
+-- Normalized item shape: { kind, data (string for line / array for chain), roles,
+-- moods (nil = any), areaGlobal+areas, timesGlobal+times, seasonsGlobal+seasons,
+-- eventsGlobal+events+eventWindow, notTimes/notSeasons/notEvents, weight, cooldown }.
+-- The *Global flags mean "untagged = matches any"; a tagged dimension hard-excludes
+-- off-tag context at score time. All normalization happens at parse time below.
 
 -- Normalize an authored `areas` field into {areaGlobal, areas-map}.
 local function normalizeAreas(areas)
@@ -992,11 +870,8 @@ local function normalizeAreas(areas)
     return false, map
 end
 
--- Normalize an authored `times` field into {timesGlobal, times-map}. EXACT
--- mirror of normalizeAreas (CONTEXT_AWARE_PLAN.md "New line tags"): omitted =>
--- any time (global wildcard), list {"night","dusk"} => uniform weight 1 per
--- listed bucket, map {night=3, dusk=1} => graded weights copied as-is. Unlisted
--- buckets are hard-excluded at score time (timeFactor), same as area.
+-- Normalize `times` into {timesGlobal, times-map} -- exact mirror of normalizeAreas.
+-- Unlisted buckets are hard-excluded at score time (timeFactor).
 local function normalizeTimes(times)
     if (times == nil) then
         return true, {}                         -- omitted => global / any time
@@ -1012,11 +887,8 @@ local function normalizeTimes(times)
     return false, map
 end
 
--- Normalize an authored `seasons` field into {seasonsGlobal, seasons-map}. EXACT
--- mirror of normalizeTimes (CONTEXT_AWARE_PLAN.md "New line tags"): omitted =>
--- any season (global wildcard), list {"autumn"} => uniform weight 1 per listed
--- season, map {autumn=3, winter=1} => graded weights copied as-is. Unlisted
--- seasons are hard-excluded at score time (seasonFactor), same as area/time.
+-- Normalize `seasons` into {seasonsGlobal, seasons-map} -- mirror of normalizeTimes.
+-- Unlisted seasons are hard-excluded at score time (seasonFactor).
 local function normalizeSeasons(seasons)
     if (seasons == nil) then
         return true, {}                         -- omitted => global / any season
@@ -1032,14 +904,10 @@ local function normalizeSeasons(seasons)
     return false, map
 end
 
--- Normalize an authored `events` field into {eventsGlobal, events-list}.
--- CONTEXT_AWARE_PLAN.md "New line tags": events is BINARY by design (no graded
--- boost) -- omitted => fires regardless of events (global wildcard); a LIST of
--- event display-names => the line fires ONLY while one of those events is active
--- (ctx.active), otherwise hard-excluded. The list/map plumbing mirrors
--- normalizeTimes, but the factor ignores any weights -- a map form is accepted
--- (keys taken as names) but treated identically to a list. Returns the names as
--- a plain ARRAY (order-agnostic membership check; also used to resolve %event%).
+-- Normalize `events` into {eventsGlobal, events-list}. events is BINARY (no graded
+-- boost): omitted => fires regardless; a list of display-names => fires ONLY while
+-- one is active, else hard-excluded. Map form accepted (keys = names, weights
+-- ignored). Returns names as a plain array (also used to resolve %event%).
 local function normalizeEvents(events)
     if (events == nil) then
         return true, {}                         -- omitted => global / any/no event
@@ -1056,26 +924,18 @@ local function normalizeEvents(events)
     return false, list
 end
 
--- Normalize an authored `eventWindow` tag (Phase 4) into one of the three valid
--- values. CONTEXT_AWARE_PLAN.md "New line tags": "active" (default) = fires only
--- while the tagged event is LIVE (Phase 3 behaviour); "approach" = ALSO fires in
--- the N-day run-up (keys off ctx.nextEvent); "after" = ALSO fires in the N-day
--- wind-down (keys off ctx.lastEvent). Anything unrecognised falls back to
--- "active" so a typo can never widen a line's eligibility.
+-- Normalize `eventWindow`: "active" (default, live only), "approach" (also the
+-- N-day run-up, keys off ctx.nextEvent), "after" (also the N-day wind-down,
+-- ctx.lastEvent). Unrecognised -> "active" so a typo never widens eligibility.
 local function normalizeEventWindow(w)
     if (w == "approach") or (w == "after") then return w end
     return "active"
 end
 
--- Normalize an authored EXCLUSION field (notTimes / notSeasons / notEvents) into a
--- set-like membership map { key = true }. These are the NEGATIVE gate -- the mirror
--- image of the positive times/seasons/events tags: instead of "fires ONLY in these
--- contexts", an exclusion means "fires in ANY context EXCEPT these". Accepts the
--- same list form ({"night"}) or map form ({night=true}) for authoring parity; any
--- value is treated as presence (these are binary, no weights). Omitted => empty set
--- (no exclusions). Used by excludeFactor; works even on an otherwise-global line so
--- you can keep a line universal but carve out the one context where it can't fire
--- (e.g. a "...and it's not even dark" joke that must never run at night).
+-- Normalize an exclusion field (notTimes/notSeasons/notEvents) into a set { key=true }.
+-- The NEGATIVE gate: "fires in ANY context EXCEPT these" (mirror of the positive
+-- tags). List or map form accepted (binary, no weights); omitted => no exclusions.
+-- Applies even to global lines, so a universal line can carve out one context.
 local function normalizeExcludeSet(field)
     local set = {}
     if (field == nil) then return set end       -- omitted => no exclusions
@@ -1087,13 +947,10 @@ local function normalizeExcludeSet(field)
     return set
 end
 
--- Wrap one authored entry (of the given kind) into the normalized item shape.
--- `entry` is either a bare string (line) or a table; `forceChain` is true for
--- entries coming from the duos/groups lists (so a legacy bare {"a","b"} array
--- is read as the whole chain rather than a tagged one-liner).
+-- Wrap one authored entry into the normalized item shape. `forceChain` (true for
+-- duos/groups) reads a legacy bare {"a","b"} array as the chain, not a one-liner.
 local function makeItem(kind, entry, forceChain)
-    -- Bare string -> untagged item (line text, or — only meaningful for the
-    -- lines list — a single-string entry).
+    -- Bare string -> untagged item.
     if (type(entry) == "string") then
         return {
             kind = kind, data = entry,
@@ -1150,30 +1007,13 @@ local function buildItems(...)
     return items
 end
 
--- ---------------------------------------------------------------------------
--- Per-faction CANDIDATE item lists (Phase 4, decision 5).
--- ---------------------------------------------------------------------------
--- The candidate set is keyed by SPEAKER faction, not by channel:
---   * Alliance speaker -> candidates = shared U alliance.
---   * Horde speaker    -> candidates = horde only.
--- Every candidate carries an `audience` ORIGIN tag ("shared"|"alliance"|"horde")
--- so emission can route to the right listeners regardless of which speaker
--- voiced it:
---   shared   -> SendWorldMessage (everyone)
---   alliance -> Alliance players only
---   horde    -> Horde players only
--- This is how an Alliance character can voice either an everyone-visible
--- (shared) line OR an Alliance-only line from the SAME candidate set: the
--- chosen item's `audience` tag decides who hears it.
---
--- Legacy enableFactionChat=false: everything (shared+alliance+horde) is merged
--- into one candidate list, all tagged audience="shared" so it broadcasts to
--- everyone -- the old "everything to everyone" behaviour, now over characters.
---
--- buildItems already returns a list with a [0] cursor; we flatten that into a
--- plain 1..N array (the per-channel chain cursor is replaced in Phase 4 by a
--- per-cast conversation state, so the old [0] slot is dropped here) and stamp
--- each item's audience.
+-- Per-faction CANDIDATE item lists, keyed by SPEAKER faction: Alliance speaker ->
+-- shared + alliance; Horde speaker -> horde. Each item carries an `audience` origin
+-- tag (shared|alliance|horde) that decides routing at emit time, so one Alliance
+-- speaker can voice either an everyone-visible or an Alliance-only line from the
+-- same set. Legacy (enableFactionChat=false): all merged, all audience="shared".
+-- taggedItems flattens buildItems' [0]-cursored list into a plain array (the cursor
+-- is replaced by per-cast conversation state) and stamps each item's audience.
 local function taggedItems(pool, audience)
     local out = {}
     local built = buildItems(pool)              -- has a [0] cursor we discard
@@ -1211,29 +1051,16 @@ else
     hordeCandidates = allianceCandidates
 end
 
--- ===========================================================================
--- Character system data tables -- the roster's vocabulary of identities.
--- ---------------------------------------------------------------------------
--- These feed the lazily-generated in-memory roster: generateCharacter draws a
--- role (weighted), personality, and area-affinity from them, and the line
--- scorer matches a character's role/personality/area against the tags authored
--- on each line (see docs/plans/CHARACTERS_PLAN.md and README.md).
---
--- EXTENSIBILITY: roles, personalities and areas are each defined in exactly
--- ONE table below. To add a role/personality/area, edit only the relevant
--- table here -- no engine changes required (that's the whole point of keeping
--- this as flat data).
--- ===========================================================================
+-- Character system data tables -- the roster's vocabulary of identities, feeding
+-- generateCharacter (role/personality/area) and the line scorer. Each of roles,
+-- personalities and areas is defined in exactly ONE table here -- add to the
+-- relevant table, no engine change needed.
 
--- Locale affinities. SIX areas (locked decision): characters and (later) lines
--- carry one of these. Untagged lines are global; tagged lines are area-scoped.
+-- The six locale affinities. Characters and tagged lines carry one; untagged = global.
 local AREAS = { "city", "rural", "battlefield", "coast", "wilderness", "road" }
 
--- Civic/occupation archetypes. Each entry:
---   prefixes -> name prefixes for the "{Role} {first}" name pattern (Phase 2)
---   weight   -> roster-frequency weight (higher = appears more often)
---   area     -> default area affinity (biases area assignment at generation)
--- `area` MUST be one of AREAS.
+-- Civic/occupation archetypes. prefixes -> "{Role} {first}" name prefixes;
+-- weight -> roster frequency; area -> default affinity (must be one of AREAS).
 local ROLES = {
     guard      = { prefixes = {"Guardsman", "Sentinel", "Watchman"},      weight = 7, area = "city" },
     citizen    = { prefixes = {"Citizen", "Townsfolk", "Commoner"},       weight = 9, area = "city" },
@@ -1251,9 +1078,8 @@ local ROLES = {
     urchin     = { prefixes = {"Little", "Ragged", "Street"},             weight = 4, area = "city" },
 }
 
--- Personality descriptors. Each maps to an epithet pool for the
--- "{first}, {epithet}" name pattern (Phase 2) and doubles as a line-selection
--- mood tag (Phase 4). 2-4 "the X" epithets per mood.
+-- Personality descriptors -> epithet pool for the "{first}, {epithet}" name pattern;
+-- also doubles as a line-selection mood tag.
 local PERSONALITIES = {
     warm     = { epithets = {"the Kind", "the Gentle", "the Warm"} },
     gruff    = { epithets = {"the Gruff", "the Surly", "the Blunt"} },
@@ -1273,28 +1099,19 @@ local PERSONALITIES = {
 }
 -- ===========================================================================
 
--- ===========================================================================
--- Roster state -- lazily-grown, in-memory ONLY.
--- ---------------------------------------------------------------------------
--- These tables live solely in Lua memory: they are NEVER persisted to any DB
--- or file, and are RESET on every server restart (the roster regrows lazily
--- from empty as chatter is emitted -- see CHARACTERS_PLAN.md "lazy growth").
---   roster          -> flat array of every generated character
---   rosterByFaction -> the same characters bucketed by faction for fast picks
---   usedNames       -> set of display names already in use (dedup guard)
--- generateCharacter fills them; resolveSpeaker/pickCharacter read them.
--- ===========================================================================
+-- Roster state -- in-memory ONLY, never persisted, reset every restart (regrows
+-- lazily as chatter is emitted). roster = all characters; rosterByFaction = the
+-- same bucketed by faction; usedNames = dedup guard. generateCharacter fills them.
 local roster          = {}
 local rosterByFaction = { alliance = {}, horde = {} }
 local usedNames       = {}
 
--- Home-city pools, split by faction (locked decision: neutral hubs like
--- Dalaran / Shattrath / Booty Bay are travel/sanctuary hubs, NOT a home city,
--- so they are deliberately excluded here even though they exist in `cities`).
+-- Home-city pools by faction. Neutral hubs (Dalaran/Shattrath/Booty Bay) are
+-- travel hubs, not home cities, so they're excluded here despite being in `cities`.
 local allianceCities = {"Stormwind", "Ironforge", "Darnassus", "The Exodar"}
 local hordeCities     = {"Orgrimmar", "Thunder Bluff", "Undercity", "Silvermoon City"}
 
--- Pre-compute the list of role/personality keys once (cheap, stable) so
+-- Pre-compute role/personality key lists once so
 -- generation can index them uniformly. ROLES is weighted; PERSONALITIES is
 -- picked uniformly.
 local roleKeys = {}
@@ -1302,13 +1119,9 @@ for k in pairs(ROLES)         do roleKeys[#roleKeys + 1] = k end
 local moodKeys = {}
 for k in pairs(PERSONALITIES) do moodKeys[#moodKeys + 1] = k end
 
--- generateName(faction, role, personality) -> display string.
--- Builds one of four weighted name patterns (see CHARACTERS_PLAN "Name
--- generation"): {first last} ~55%, {Role first} ~20%, {first, epithet} ~15%,
--- {first} bare ~10%. First names come from t.d[faction] (alliance|horde),
--- surnames from t.d.surnames. Deduped against usedNames with a bounded retry;
--- after ~12 tries we accept a collision (only realistic once the pool is
--- exhausted). RNG is seeded once in t.init.
+-- generateName -> display string via four weighted patterns: {first last} ~55%,
+-- {Role first} ~20%, {first, epithet} ~15%, {first} ~10%. First names from
+-- t.d[faction], surnames from t.d.surnames. Deduped vs usedNames (12-try cap).
 local function pickFrom(list)
     return list[math.random(#list)]
 end
@@ -1362,24 +1175,16 @@ local function pickRoleWeighted()
     return roleKeys[#roleKeys]  -- float-rounding fallback
 end
 
--- generateCharacter(faction) -> a full character table (see CHARACTERS_PLAN
--- "The character model"), registered into roster / rosterByFaction with its
--- name marked used. faction is "alliance" | "horde".
---
--- The maxCharacters cap is enforced in resolveSpeaker (which decides whether to
--- spawn at all); generateCharacter here unconditionally builds and registers a
--- character -- it does NOT enforce the cap.
+-- generateCharacter(faction) -> a full character table, registered into roster /
+-- rosterByFaction with its name marked used. Does NOT enforce maxCharacters --
+-- the cap is checked by resolveSpeaker before calling this.
 local function generateCharacter(faction)
     local role        = pickRoleWeighted()
     local personality = moodKeys[math.random(#moodKeys)]
 
-    -- area: a locale AFFINITY biased toward the role's default area (~65%),
-    -- else a uniformly random AREAS member -- so the roster reads as roughly
-    -- role-typed without being rigid (see CHARACTERS_PLAN "area is a locale
-    -- affinity ... plus randomness").
-    -- FUTURE HOOK: derive effective area from a real player's current zone for
-    -- true zone-specific chatter (see CHARACTERS_PLAN decision 3). v1 uses
-    -- this static affinity only.
+    -- area: biased to the role's default area (~65%), else a random AREAS member,
+    -- so the roster reads roughly role-typed without being rigid.
+    -- FUTURE HOOK: derive area from a real player's current zone; v1 is static.
     local area
     if (math.random() < 0.65) and (ROLES[role].area) then
         area = ROLES[role].area
@@ -1411,38 +1216,14 @@ local function generateCharacter(faction)
     return character
 end
 
--- ===========================================================================
--- Roster-query seam (Phase 3) -- decision 9.
--- ---------------------------------------------------------------------------
--- Two thin functions funnel all speaker selection so the future
--- player-interaction responder (PLAYER_INTERACTION_PLAN.md) can reuse them and
--- draw a KNOWN recurring resident from this same roster:
---
---   pickCharacter(weightField, filters) -> character | nil
---       Picks an EXISTING character only (never spawns). Weighted-random by the
---       numeric `weightField` ("chattiness" | "friendliness"); returns nil when
---       no candidate matches.
---   resolveSpeaker(faction) -> character
---       Weighted pick over existing characters (weight=chattiness) PLUS one
---       virtual "new character" slot (weight=newCharacterWeight); lazily spawns
---       under the cap. This is the ambient-initiator entry point.
--- ===========================================================================
+-- Roster-query seam: two functions funnel all speaker selection.
+--   pickCharacter(weightField, filters) -> EXISTING character | nil (never spawns).
+--   resolveSpeaker(faction) -> ambient initiator; weighted over existing chars plus
+--       one virtual "new character" slot, lazily spawning under the cap.
 
--- pickCharacter(weightField, filters) -- EXISTING-ONLY weighted pick.
---   weightField : "chattiness" | "friendliness" (the numeric roulette weight).
---   filters (all optional):
---     faction     -- restrict to rosterByFaction[faction] (else the whole roster)
---     role        -- char.role must equal this
---     mood        -- char.personality must equal this
---     area        -- char.area must equal this
---     excludeName -- skip the character with this display name (dedup vs initiator)
---     allowSpawn  -- IGNORED here: pickCharacter NEVER spawns; it is the
---                    existing-only primitive. The flag is consumed by CALLERS
---                    (e.g. cast assembly / a player responder) and by
---                    resolveSpeaker, which decide whether to fall back to a
---                    spawn when pickCharacter returns nil. Documented so callers
---                    can pass a uniform filter table.
--- Returns a character, or nil if no existing character matches.
+-- pickCharacter -- existing-only weighted pick. weightField = "chattiness" |
+-- "friendliness". filters (all optional): faction, role, mood, area, excludeName.
+-- (allowSpawn is ignored here -- spawning is a caller decision.) Returns nil if none match.
 local function pickCharacter(weightField, filters)
     filters = filters or {}
     local source = filters.faction and rosterByFaction[filters.faction] or roster
@@ -1473,9 +1254,7 @@ local function pickCharacter(weightField, filters)
     return candidates[#candidates]  -- float-rounding fallback
 end
 
--- Cap helpers. maxCharacters is the global cap; maxCharactersPerFaction (when
--- non-nil) is an additional per-faction sub-cap counted over
--- rosterByFaction[faction].
+-- maxCharacters is the global cap; maxCharactersPerFaction (if set) is a per-faction sub-cap.
 local function rosterAtCap(faction)
     if (#roster >= maxCharacters) then return true end
     if (maxCharactersPerFaction ~= nil)
@@ -1485,20 +1264,12 @@ local function rosterAtCap(faction)
     return false
 end
 
--- resolveSpeaker(faction) -- ambient initiator (decision 6). Weighted roulette
--- over each existing same-faction character (weight = chattiness) PLUS one
--- virtual "new character" slot (weight = newCharacterWeight):
---   * pick == virtualNew and roster under cap -> spawn + register + speak now.
---   * pick == virtualNew at the cap           -> fall back to reuse an existing
---                                                 character (pickCharacter).
---   * else                                     -> return the picked existing char.
--- Cold start (empty roster) ALWAYS spawns: the virtual slot is the only
--- candidate. Spawning is self-balancing -- as summed chattiness grows the
--- virtual slot wins less often, so growth tapers and halts at the cap.
---
--- For `shared` (everyone-visible) ticks the alliance-driver calls
--- resolveSpeaker("alliance"), so an everyone-visible line is always
--- Alliance-voiced (decision 5).
+-- resolveSpeaker(faction) -- ambient initiator. Weighted roulette over same-faction
+-- characters (weight = chattiness) PLUS a virtual "new character" slot (weight =
+-- newCharacterWeight): if the virtual slot wins and we're under cap -> spawn; at cap
+-- -> reuse an existing char; else return the picked char. Self-balancing: as summed
+-- chattiness grows the virtual slot wins less, so growth tapers and halts at the cap.
+-- (Shared lines call resolveSpeaker("alliance") -> always Alliance-voiced.)
 local function resolveSpeaker(faction)
     local bucket = rosterByFaction[faction] or {}
 
@@ -1522,42 +1293,20 @@ local function resolveSpeaker(faction)
     return pickCharacter("chattiness", { faction = faction })
 end
 
--- ===========================================================================
--- Line scoring + weighted picker (Phase 4) -- CHARACTERS_PLAN "Line scoring".
--- ---------------------------------------------------------------------------
--- A global, monotonically-increasing tick counter advances on every emission
--- (one per spoken conversation item, NOT per chained line). Each item records
--- the tick it was last used on, on the item itself (`lastTick`), so recency
--- penalties are per-item with no extra bookkeeping table.
+-- Line scoring + weighted picker. globalTick advances once per emitted item (not
+-- per chained line); each item records its lastTick for per-item recency.
 local globalTick = 0
 
--- scoreLine(item, char, tick) -> number >= 0. A score of 0 means EXCLUDE
--- (areaFactor and timeFactor can hard-exclude). Factors:
---   base         = item.weight (default 1, normalized at parse time)
---   roleFactor   = roleMoodMatchStrength when char.role matches item.roles;
---                  1.0 when item.roles is nil (untagged = any role);
---                  1/roleMoodMatchStrength (a low floor, NOT zero) on mismatch.
---   moodFactor   = same rule against char.personality / item.moods.
---   areaFactor   = 1.0 when item.areaGlobal (untagged = any area);
---                  else item.areas[char.area] * areaMatchStrength when the
---                  character's area IS in the line's area map;
---                  else 0  -> HARD EXCLUDE (the "wouldn't make sense here" guard:
---                  a city character never draws a battlefield-only line).
---   timeFactor   = 1.0 when item.timesGlobal (untagged = any time of day) OR when
---                  the time context is disabled/unavailable; else
---                  item.times[ctx.timeKey] * timeMatchStrength when the in-game
---                  bucket IS in the line's times map; else 0 -> HARD EXCLUDE
---                  (a "the taverns are roaring tonight" line stays silent by day).
---   seasonFactor = 1.0 when item.seasonsGlobal (untagged = any season) OR when
---                  the season context is disabled/unavailable; else
---                  item.seasons[ctx.season] * seasonMatchStrength when the in-game
---                  season IS in the line's seasons map; else 0 -> HARD EXCLUDE
---                  (a "the granaries are full" line stays silent outside autumn).
---   recencyPenalty = 0 within item.cooldown ticks of its last use, then ramps
---                  linearly back to 1.0 over the following `cooldown` ticks
---                  (so a just-used line is suppressed, not permanently banned).
--- Untagged role/mood -> 1.0 and untagged area -> global, so every character
--- ALWAYS has eligible fallback lines and never goes silent.
+-- scoreLine(item, char, tick) -> score >= 0; 0 means EXCLUDE. Final score is the
+-- product of these factors:
+--   base         = item.weight
+--   role/mood    = matchStrength on match, 1.0 if untagged, 1/matchStrength on mismatch
+--   area         = 1.0 if global; else weight*strength if char.area is tagged, else 0 (EXCLUDE)
+--   time/season  = like area, but also 1.0 when context is off/unavailable (never exclude blindly)
+--   event        = binary 1.0/0 (see eventFactor)
+--   exclude      = 0 if context lands in a notTimes/notSeasons/notEvents set (see excludeFactor)
+--   recency      = 0 within cooldown ticks of last use, ramping back to 1.0 over the next cooldown
+-- Untagged role/mood/area always score >0, so a character is never left silent.
 local function listContains(list, value)
     if (not list) then return false end
     for _, v in ipairs(list) do
@@ -1581,14 +1330,9 @@ local function areaFactor(item, char)
     return w * areaMatchStrength
 end
 
--- timeFactor(item, ctx) -> number >= 0. EXACT parallel to areaFactor
--- (CONTEXT_AWARE_PLAN.md "Scorer changes"):
---   untagged `times` (timesGlobal)        => 1.0 (global, never excluded)
---   tagged & ctx.timeKey IS in the map    => weight * timeMatchStrength (boosted)
---   tagged & ctx.timeKey NOT in the map   => 0 -> HARD EXCLUDE
--- Forced to 1.0 (no exclusion, today's behaviour) when the master/time flags are
--- off OR ctx.timeKey is unavailable/neutral (e.g. GetGameTime/os.date absent), so
--- the fallback invariant holds: a tagged line never excludes itself blindly.
+-- timeFactor -> parallel to areaFactor: 1.0 if timesGlobal; weight*strength if
+-- ctx.timeKey is tagged; 0 (EXCLUDE) if not. Forced 1.0 when flags off or
+-- ctx.timeKey unavailable, so a tagged line never excludes itself blindly.
 local function timeFactor(item, c)
     if (item.timesGlobal) then return 1.0 end             -- untagged = any time
     -- Context off or unknown -> behave like today's random selection (no exclude).
@@ -1599,14 +1343,9 @@ local function timeFactor(item, c)
     return w * timeMatchStrength
 end
 
--- seasonFactor(item, c) -> number >= 0. EXACT parallel to timeFactor
--- (CONTEXT_AWARE_PLAN.md "Scorer changes"):
---   untagged `seasons` (seasonsGlobal)      => 1.0 (global, never excluded)
---   tagged & ctx.season IS in the map       => weight * seasonMatchStrength (boosted)
---   tagged & ctx.season NOT in the map      => 0 -> HARD EXCLUDE
--- Forced to 1.0 (no exclusion, today's behaviour) when the master/season flags are
--- off OR ctx.season is unavailable/neutral (e.g. GetGameTime/os.date absent), so
--- the fallback invariant holds: a tagged line never excludes itself blindly.
+-- seasonFactor -> parallel to timeFactor: 1.0 if seasonsGlobal; weight*strength if
+-- ctx.season is tagged; 0 (EXCLUDE) if not. Forced 1.0 when flags off or ctx.season
+-- unavailable.
 local function seasonFactor(item, c)
     if (item.seasonsGlobal) then return 1.0 end           -- untagged = any season
     -- Context off or unknown -> behave like today's random selection (no exclude).
@@ -1617,24 +1356,11 @@ local function seasonFactor(item, c)
     return w * seasonMatchStrength
 end
 
--- eventFactor(item, c) -> number (1.0 or 0). BINARY by design
--- (CONTEXT_AWARE_PLAN.md "Scorer changes"): an event-tagged line is fundamentally
--- ABOUT that event, so it either applies (1.0) or must not appear (0) -- no low
--- floor, no graded boost.
---   untagged `events` (eventsGlobal)             => 1.0 (fires regardless)
---   flags off (master/event)                     => 1.0 (today's behaviour)
---   ctx.active empty (API absent/unknown)        => 1.0 (NEVER exclude when we
---                                                   can't tell what's live)
---   tagged & ONE of the line's events is active  => 1.0 (applies)
---   tagged & NONE of the line's events active     => 0  -> HARD EXCLUDE
--- Phase 4 extends "applies" via eventWindow:
---   "active" (default) -- as above (live only).
---   "approach"         -- ALSO 1.0 when a tagged event == ctx.nextEvent.name AND
---                         ctx.nextEvent.daysAway <= eventApproachDays.
---   "after"            -- ALSO 1.0 when a tagged event == ctx.lastEvent.name AND
---                         ctx.lastEvent.daysAgo <= eventAfterDays.
--- The never-exclude-when-API-absent guard still holds: an empty ctx.active AND no
--- schedule (nextEvent/lastEvent nil) => 1.0 (can't tell what's live or near).
+-- eventFactor -> 1.0 or 0, BINARY (an event-tagged line is ABOUT that event, so it
+-- applies or it doesn't). 1.0 if untagged, flags off, or nothing knowable (empty
+-- ctx.active AND no schedule -- never exclude on a guess). Otherwise 1.0 when a
+-- tagged event is live, or within eventWindow: "approach" (== ctx.nextEvent within
+-- eventApproachDays) / "after" (== ctx.lastEvent within eventAfterDays); else 0.
 local function eventFactor(item, c)
     if (item.eventsGlobal) then return 1.0 end            -- untagged = any/no event
     if (not enableContextAware) or (not enableEventContext) then return 1.0 end
@@ -1642,9 +1368,8 @@ local function eventFactor(item, c)
     local active   = c and c.active
     local liveKnown = active and (next(active) ~= nil)
     local window   = item.eventWindow or "active"
-    -- Whether we have ANY scheduling signal for this line's window. If neither the
-    -- active set NOR the relevant nearest-event slot is known, we cannot tell ->
-    -- don't exclude (fallback invariant).
+    -- If neither the active set nor the relevant nearest-event slot is known, we
+    -- can't judge -> don't exclude (fallback invariant).
     local nearKnown = false
     if (window == "approach") then nearKnown = (c and c.nextEvent) ~= nil
     elseif (window == "after") then nearKnown = (c and c.lastEvent) ~= nil end
@@ -1678,18 +1403,10 @@ local function eventFactor(item, c)
     return 0                                              -- HARD EXCLUDE (out of window)
 end
 
--- excludeFactor(item, c) -> number (1.0 or 0). The NEGATIVE gate, a standalone
--- factor (forward-compat shape: factor(line, ctx)) covering notTimes/notSeasons/
--- notEvents. Returns 0 (HARD EXCLUDE) when the CURRENT context lands in one of the
--- line's exclusion sets; 1.0 otherwise. Unlike the positive factors this is checked
--- for EVERY line (even otherwise-global ones), so a universal line can still carve
--- out a single context it must never fire in.
---   notTimes   -- excludes when ctx.timeKey is in the set (e.g. {"night"}).
---   notSeasons -- excludes when ctx.season is in the set (e.g. {"winter"}).
---   notEvents  -- excludes when any named event is ACTIVE in ctx.active.
--- Each dimension respects its sub-flag and the fallback invariant: if context is
--- off OR the relevant ctx value is unknown (clock/season absent, API missing), that
--- dimension can't exclude -- never go silent on a guess. An empty set never excludes.
+-- excludeFactor -> 1.0 or 0. The NEGATIVE gate over notTimes/notSeasons/notEvents,
+-- checked for EVERY line (even global ones) so a universal line can carve out one
+-- context. Returns 0 when ctx.timeKey/ctx.season is in the set, or a notEvents event
+-- is active. Each dimension respects its sub-flag and only excludes when ctx is known.
 local function excludeFactor(item, c)
     if (not enableContextAware) then return 1.0 end       -- feature off => no exclusions
     if (not c) then return 1.0 end
@@ -1742,14 +1459,9 @@ local function scoreLine(item, char, tick)
     return base * rf * mf * af * tf * sf * ef * xf * rp
 end
 
--- pickLine(candidates, char, tick) -> item | nil.
--- Scores every candidate, then weighted-random picks among score>0 items.
--- Because untagged role/mood score 1.0 and untagged area is global, every
--- character always has eligible fallback lines, so this returns non-nil for any
--- non-empty candidate set with at least one global item. If somehow ALL
--- candidates are excluded (e.g. a pathological all-area-tagged set with none
--- matching the character), fall back to ANY global item so the speaker is never
--- silent.
+-- pickLine -> item | nil. Scores every candidate, weighted-random picks among
+-- score>0 items. If all are excluded, falls back to any global item so the speaker
+-- is never silent; returns nil only when there is truly nothing to say.
 local function pickLine(candidates, char, tick)
     local scored, total = {}, 0
     for _, item in ipairs(candidates) do
@@ -1776,19 +1488,10 @@ local function pickLine(candidates, char, tick)
     return scored[#scored].item                            -- float-rounding fallback
 end
 
--- ===========================================================================
--- Cast assembly (Phase 4) -- CHARACTERS_PLAN "Cast assembly".
--- ---------------------------------------------------------------------------
--- For a duo/group, the resolved initiator is voice A / the first speaker. The
--- remaining co-speakers are drawn from the SAME-faction roster (for a
--- shared-audience line that faction is Alliance, since shared is Alliance-voiced)
--- weighted by `friendliness`, preferring role/mood/area compatibility with the
--- chosen line, deduped against everyone already cast. If the roster is too thin
--- to fill the cast, co-speakers are lazily generated (subject to maxCharacters).
--- Each cast member is a full CHARACTER (name + stable color), not a bare name.
---
--- `castFaction` is the faction the co-speakers are drawn from (the initiator's
--- faction; for shared lines this is "alliance").
+-- Cast assembly. For a duo/group the initiator is voice A; co-speakers are drawn
+-- from the castFaction roster (Alliance for shared lines) weighted by friendliness,
+-- preferring role/mood/area match, deduped, lazily spawned if the roster is thin
+-- (cap-aware). Each member is a full character (name + stable color).
 local function assembleCast(initiator, item, castFaction)
     if (item.kind == "line") then
         return { initiator }                               -- single voice
@@ -1848,9 +1551,8 @@ local function assembleCast(initiator, item, castFaction)
     return cast
 end
 
--- Choose which cast member voices line `ti` of a conversation (1-based).
--- Duos strictly alternate A/B/A/B; groups pick a random member, never the same
--- voice twice in a row. Operates over CHARACTERS (cast is a list of characters).
+-- Pick which cast member voices line `ti` (1-based). Duos alternate A/B/A/B;
+-- groups pick a random member, never the same voice twice in a row.
 local function speakerForLine(cast, kind, ti, prevName)
     if (#cast == 1) then return cast[1] end
     if (kind == "duo") then
@@ -1869,21 +1571,17 @@ end
 t.cc = {"C79C6E","F58CBA","ABD473","FFF569","FFFFFF","C41F3B","0070DE","69CCF0","9482C9","FF7d0A"}
 
 t.init = function(s)
-    -- Seed the RNG ONCE, at startup. (The original reseeded on every line, which
-    -- tied variety to the wall clock and made same-second bursts repeat.)
+    -- Seed the RNG ONCE at startup (reseeding per line tied variety to the wall clock).
     math.randomseed(os.time())
     math.random(); math.random(); math.random()  -- discard first low-entropy values
     s.d = require("npc_name") or {}
-    -- Backwards-compat: if a flat name list is supplied (no faction keys), treat
-    -- it as the surname pool. Generation reads alliance/horde first names +
-    -- surnames (see generateName).
+    -- Back-compat: a flat name list (no faction keys) is treated as the surname pool.
     if (s.d[1] ~= nil) then s.d = {surnames = s.d} end
     s.d.surnames = s.d.surnames or {}
     s.d.alliance = s.d.alliance or {}
     s.d.horde    = s.d.horde    or {}
     if (ns ~= "") then
-        -- Optional DB name source: feed it into the faction-agnostic SURNAME
-        -- pool so generated "{first} {last}" names can use DB-sourced surnames.
+        -- Optional DB name source -> fed into the surname pool.
         local q = WorldDBQuery(ns)
         if (q) then
             repeat
@@ -1894,41 +1592,17 @@ t.init = function(s)
 end
 t:init()
 
--- ===========================================================================
--- Conversation state machine over CHARACTERS.
--- ---------------------------------------------------------------------------
--- Speakers are drawn from the generated roster via resolveSpeaker, lines chosen
--- by scoreLine/pickLine, and duo/group casts assembled by friendliness
--- (assembleCast). The distinct-speaker guard lives in speakerForLine (above),
--- operating over characters.
---
--- A "channel" here is the driver of a candidate set; conversation state is kept
--- per channel in `t.conv[channel]` so a started duo/group finishes line-by-line
--- with its FIXED cast before a new item is begun. State fields:
---   item     -> the in-progress item (nil = start a fresh one next emit)
---   cast     -> the fixed cast of characters for this item
---   ti       -> next line index within item.data (chains)
---   prevName -> last speaker's name (group no-immediate-repeat guard)
---   speaker  -> the character who voiced the most recent line
---   audience -> the item's audience tag (drives emission routing)
--- A `line` item is a one-shot (single emit). A duo/group runs its chain to the
--- end, then the next emit starts a fresh item.
+-- Conversation state machine over characters. A "channel" drives a candidate set;
+-- per-channel state in t.conv[channel] lets a started duo/group finish line-by-line
+-- with its FIXED cast before a new item begins. State fields: item (in-progress, nil
+-- = start fresh), cast, ti (next chain line index), prevName (no-repeat guard),
+-- speaker, audience (routing tag). A `line` is one-shot; a duo/group runs to the end.
 t.conv = {}
 
--- Resolve %city% for the CURRENT speaking character.
---   homeCityBias = true  -> %city% defaults to that speaker's own homeCity, so a
---                           line reads as self-reference ("things are quiet in
---                           %city%" = the speaker's home). Because homeCity is
---                           drawn at generation from the speaker's OWN faction
---                           capital list (allianceCities / hordeCities), this is
---                           automatically faction-correct: a Horde speaker biases
---                           to a Horde capital, an Alliance speaker to an Alliance
---                           one. Neutral hubs (Dalaran/Shattrath/Booty Bay) are
---                           NEVER home cities, so they only appear via the random
---                           path below.
---   homeCityBias = false -> random over ALL cities (capitals + neutral hubs).
--- Called per LINE with that line's actual speaker, so in a duo/group each cast
--- member self-references THEIR OWN home, not just the conversation initiator.
+-- Resolve %city% for the current speaker. homeCityBias=true -> the speaker's own
+-- homeCity (faction-correct, since homeCity is drawn from that faction's capitals;
+-- neutral hubs never appear here). false -> random over all cities. Called per LINE
+-- so each cast member in a duo/group self-references their own home.
 local function cityFor(speaker)
     if (homeCityBias) and (speaker) and (speaker.homeCity) then
         return speaker.homeCity
@@ -1936,10 +1610,9 @@ local function cityFor(speaker)
     return selectRandomCity()
 end
 
--- Begin (or continue) the conversation on `channel`, drawing from `candidates`
--- voiced by `initiator` of `castFaction`. Returns rawText, speaker, audience,
--- item. The trailing `item` lets the renderer honour the line's `events` tag for
--- %event% (Phase 3). Advances the per-channel conversation state and global tick.
+-- Begin or continue the conversation on `channel`. Returns rawText, speaker,
+-- audience, item (item lets the renderer honour the line's `events` tag for
+-- %event%). Advances the per-channel state and global tick.
 local function nextLine(channel, candidates, initiator, castFaction)
     local st = t.conv[channel]
     if (not st) then st = {}; t.conv[channel] = st end
@@ -1983,30 +1656,15 @@ local function nextLine(channel, candidates, initiator, castFaction)
     return item.data[1], speaker, item.audience, item
 end
 
--- ---------------------------------------------------------------------------
--- Event-activation burst (Phase 6) -- CONTEXT_AWARE_PLAN.md phased item 6 /
--- "Event-sparked ambient bursts". Behind enableEventBurst (default false), so by
--- default this is dead code and behaviour is byte-for-byte unchanged.
--- ---------------------------------------------------------------------------
--- When refreshCtx detects an event flipping INTO active, it calls fireEventBurst
--- (forward-declared near ctx) ONCE for that activation. We REUSE the existing
--- conversation machinery rather than building a new renderer: a short two-line
--- duo burst item is built with makeItem (tagged with the just-activated event so
--- %event% resolves to it -- token & tag agree), a cast is assembled, and the item
--- is SEEDED into the per-channel t.conv state so the very next speak() tick
--- continues it line-by-line through nextLine -- exactly like an ambient duo.
---
--- It is voiced as an everyone-visible (audience="shared") exchange on the
--- "alliance" channel by an Alliance-faction cast, matching how shared lines are
--- normally voiced (decision 5). Everything is capability-/nil-guarded: if a
--- speaker can't be resolved, the channel already has a chain in progress, or any
--- content/machinery is unavailable, it simply does nothing -- it never errors and
--- never clobbers an ongoing conversation.
+-- Event-activation burst (behind enableEventBurst; default off = dead code). When
+-- refreshCtx detects an event flipping active it calls fireEventBurst once: a short
+-- duo item is built with makeItem (tagged with the event so %event% agrees), a cast
+-- assembled, and the item SEEDED into t.conv so the next speak() tick plays it like
+-- an ambient duo. Voiced everyone-visible (audience="shared") by an Alliance cast.
+-- Fully nil-/flag-guarded: never errors, never clobbers an in-progress chain.
 
--- Event-burst content pool (Phase 6). Read from context_map.lua with a small
--- inline fallback so the burst works even if the data file is older/missing. Each
--- entry is a two-line duo chain; %event% is filled at render time with the
--- activated holiday's name.
+-- Burst content pool from context_map.lua + inline fallback. Each entry is a
+-- two-line duo chain; %event% is filled at render time.
 local eventBurstPool = (type(ctxMap.eventBurst) == "table" and #ctxMap.eventBurst > 0)
     and ctxMap.eventBurst
     or {
@@ -2021,29 +1679,24 @@ fireEventBurst = function(eventName)               -- assigns the forward-declar
 
     local channel = "alliance"                               -- shared lines are Alliance-voiced
     local st = t.conv[channel]
-    -- Don't clobber an in-progress duo/group chain -- the festival flavor is a
-    -- nice-to-have, never worth truncating an ongoing exchange. Seed only when the
-    -- channel is idle (no chain mid-flight).
+    -- Don't clobber an in-progress chain -- only seed when the channel is idle.
     if (st) and (st.item) and (st.item.kind ~= "line") then return end
 
-    -- Build a duo burst item, tagged with the activated event so %event% resolves
-    -- to it. forceChain=true so makeItem treats the {a,b} table as a chain.
+    -- Build a duo burst item tagged with the event (forceChain so {a,b} is a chain).
     local chain = eventBurstPool[math.random(#eventBurstPool)]
     if (type(chain) ~= "table") or (#chain < 1) then return end
     local item = makeItem("duo", { chain = chain, events = { eventName } }, true)
     item.audience = "shared"                                 -- everyone-visible
     item.lastTick = globalTick
 
-    -- Assemble a same-faction cast around a resolved Alliance speaker; reuse the
-    -- ambient cast machinery so two distinct voices trade the lines.
+    -- Assemble a same-faction cast around a resolved Alliance speaker.
     local initiator = resolveSpeaker("alliance")
     if (not initiator) then return end                       -- no character available -> skip
     local cast = assembleCast(initiator, item, "alliance")
     if (type(cast) ~= "table") or (#cast < 1) then return end
 
-    -- Seed the conversation state so the NEXT speak("alliance", ...) tick continues
-    -- this chain from line 1 with its fixed cast (nextLine's "continue chain"
-    -- branch). This is the same shape nextLine itself leaves behind for a duo.
+    -- Seed the state so the next speak("alliance") tick plays the chain from line 1
+    -- (same shape nextLine leaves behind for a duo).
     t.conv[channel] = {
         item     = item,
         cast     = cast,
@@ -2054,13 +1707,9 @@ fireEventBurst = function(eventName)               -- assigns the forward-declar
     }
 end
 
--- Run the full %token% substitution on `txt` for `speaker`. (Same ~44 gsubs as
--- before; only %city% gained the homeCity bias.)
--- renderTokens(txt, speaker, ctx, item) -- the trailing `ctx`/`item` are optional
--- so existing callers keep working; when absent (or context disabled/unavailable)
--- the context-aware tokens fall back to their random helpers (today's behaviour).
--- `item` is the line being rendered; it lets %event% honour the line's `events`
--- tag (token & tag agree) -- see resolveEvent.
+-- Run the full %token% substitution on `txt`. `ctx`/`item` are optional; when
+-- absent (or context off) the context-aware tokens fall back to random helpers.
+-- `item` lets %event% honour the line's `events` tag (see resolveEvent).
 local function renderTokens(txt, speaker, ctx, item)
     txt = string.gsub(txt, "%%zone%%",       selectRandomZone())
     txt = string.gsub(txt, "%%instance%%",   selectRandomInstance())
@@ -2099,23 +1748,13 @@ local function renderTokens(txt, speaker, ctx, item)
     txt = string.gsub(txt, "%%gold%%",       selectRandomGold())
     txt = string.gsub(txt, "%%level%%",      selectRandomLevel())
     txt = string.gsub(txt, "%%gearscore%%",  selectRandomGearscore())
-    -- %event% is context-aware (Phase 3): a tagged line resolves to its own event
-    -- (token & tag agree); else something live now (ctx.active); else random.
-    -- Phase 4 replaces the random fallback with the nearest-event reference.
+    -- Context-aware tokens (resolve from ctx when enabled, else random):
+    -- %event% honours a line's tag, else live, else nearest; %nextevent%/%lastevent%
+    -- name the upcoming/just-past holiday; %season%/%timeofday% agree with the clock.
     txt = string.gsub(txt, "%%event%%",      resolveEvent(item, ctx))
-    -- %nextevent% / %lastevent% (Phase 4): explicit anticipation/aftermath naming
-    -- of the soonest-upcoming / most-recently-ended holiday; both fall back to a
-    -- neutral phrase when scheduling is unknown (never a wrong holiday).
     txt = string.gsub(txt, "%%nextevent%%",  resolveNextEvent(ctx))
     txt = string.gsub(txt, "%%lastevent%%",  resolveLastEvent(ctx))
-    -- %season% is context-aware (Phase 5): when context is enabled, resolve to the
-    -- in-game season (ctx.season, derived from the month + holiday cross-check);
-    -- otherwise fall back to the random helper (today's behaviour).
     txt = string.gsub(txt, "%%season%%",     resolveSeason(ctx))
-    -- %timeofday% is context-aware (Phase 1): when context is enabled and a
-    -- timeKey pool exists, draw a display string that agrees with the in-game
-    -- clock; otherwise fall back to the random helper (today's behaviour). The
-    -- pool is inlined here for Phase 1 and moves to context_map.lua later.
     txt = string.gsub(txt, "%%timeofday%%",  resolveTimeOfDay(ctx))
     txt = string.gsub(txt, "%%shop%%",       selectRandomShop())
     txt = string.gsub(txt, "%%route%%",      selectRandomRoute())
@@ -2124,15 +1763,10 @@ local function renderTokens(txt, speaker, ctx, item)
     return txt
 end
 
--- Formatting helper ---------------------------------------------------------
--- Wraps a line in the colored [World] name prefix. The COLOR is now the
--- speaking character's STABLE per-character color (set once at generation),
--- not a fresh random color per line -- so a recurring voice keeps its identity.
+-- Wrap a line in the colored [World] name prefix. The color is the speaker's stable
+-- per-character color (set once at generation), so a recurring voice keeps its identity.
 local function formatWorld(speaker, body)
     local name  = speaker.name
-    -- color is assigned ONCE per character at generation (generateCharacter) and
-    -- never changes, so every line a character speaks keeps the same name color.
-    -- No random-color path remains here -- a recurring voice is a stable identity.
     local color = speaker.color
     return string.format("|cFFFFC0C0[World] |r|cff%s|Hplayer:%s|h[%s]|h|r: |cFFFFC0C0%s|r",
         color, name, name, body)
@@ -2155,9 +1789,8 @@ local function emit(audience, msg)
     end
 end
 
--- Drive one emission on `channel`: resolve a speaker for `castFaction`, pick &
--- render a line from `candidates`, and route it by the line's audience tag.
--- Returns silently if nothing can be said. The speaker color stays stable.
+-- Drive one emission on `channel`: resolve a speaker, pick & render a line, route
+-- it by the line's audience tag. Returns silently if nothing can be said.
 local function speak(channel, candidates, castFaction)
     refreshCtx()                                             -- cheap (TTL-guarded); keeps ctx fresh
     local initiator = resolveSpeaker(castFaction)
@@ -2170,29 +1803,15 @@ local function speak(channel, candidates, castFaction)
 end
 
 -- Events --------------------------------------------------------------------
--- TIMER-MAPPING DESIGN (Phase 4, decision 5). The candidate set is per SPEAKER
--- faction, not per channel, so we map timers to FACTIONS rather than to
--- audiences:
---   * "alliance-driver" timer  -> an ALLIANCE speaker over allianceCandidates
---       (shared U alliance). Each chosen line is routed by its OWN audience tag:
---       a shared-origin line -> SendWorldMessage (everyone); an alliance-origin
---       line -> Alliance only. This single timer therefore covers BOTH the
---       everyone-visible chatter AND the Alliance-only chatter, voiced by
---       Alliance characters (decision 5: shared is Alliance-voiced).
---   * "horde-driver" timer     -> a HORDE speaker over hordeCandidates (horde),
---       always Horde-only audience.
--- WHY drop the old separate alliance-only timer: with the per-faction candidate
--- model, Alliance-only lines are simply alliance-origin items inside the
--- Alliance speaker's set, already emitted (to Alliance only) by the
--- alliance-driver timer. A separate alliance timer would DOUBLE-voice the
--- alliance pool. So we keep exactly two drivers (Alliance, Horde), avoiding any
--- duplication while preserving every audience path. The alliance-driver runs on
--- the faster `talk_time` interval (it carries the everyone-visible volume the
--- old shared timer did); the horde-driver runs on `faction_talk_time`.
---
--- Legacy enableFactionChat=false: hordeCandidates == allianceCandidates and all
--- items are tagged audience="shared", so BOTH timers broadcast everything to
--- everyone -- the original "everything to everyone" behaviour.
+-- Two timers, mapped to FACTIONS (candidates are per-speaker-faction):
+--   * alliance-driver -> an Alliance speaker over allianceCandidates (shared +
+--       alliance). Each line routes by its OWN audience tag, so this one timer
+--       carries both everyone-visible and Alliance-only chatter (on talk_time).
+--   * horde-driver    -> a Horde speaker over hordeCandidates, Horde-only (faction_talk_time).
+-- No separate alliance-only timer: Alliance-only lines are already alliance-origin
+-- items in the Alliance set, so a third timer would double-voice them.
+-- Legacy (enableFactionChat=false): both pools merged, all audience="shared", so
+-- both timers broadcast everything to everyone.
 
 -- Alliance-driver (also carries everyone-visible shared lines).
 CreateLuaEvent(function()
@@ -2205,9 +1824,8 @@ if enableFactionChat then
         speak("horde", hordeCandidates, "horde")
     end, {faction_talk_time[1], faction_talk_time[2]}, 0)
 else
-    -- Legacy: a second everyone-visible driver over the merged pool (kept so the
-    -- total chatter cadence matches the original two-timer setup). Voiced by an
-    -- Alliance character; audience="shared" routes it to everyone.
+    -- Legacy: a second everyone-visible driver over the merged pool (keeps the
+    -- original two-timer cadence). Alliance-voiced; audience="shared" -> everyone.
     CreateLuaEvent(function()
         speak("horde", hordeCandidates, "alliance")
     end, {faction_talk_time[1], faction_talk_time[2]}, 0)
