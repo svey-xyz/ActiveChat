@@ -14,6 +14,8 @@
 - CHARACTERS_PLAN.md (home zone extends the character model)
 - CONTEXT_AWARE_PLAN.md (reuses `ctx.area` and the nil-safe map discipline)
 - CONVERSATION_PACING_PLAN.md (conversation state must key by delivery group)
+- docs/characters.md (the shipped trait-weighting layer — `AREA_ROLE_BIAS` reuses its
+  `*_BIAS` map convention and the `scaleModifier` strength form)
 
 ## Completed
 
@@ -42,6 +44,10 @@
 >    ambience (a city is busy and chatty; the wilds are sparse; a battlefield is bursty),
 >    replacing the current per-faction (`alliance` / `horde` / `shared`) timer split,
 >    which is no longer needed — faction becomes a per-delivery gate, not a timer axis.
+> 4. **Area-appropriate voices** — the *role* doing the talking should suit the locale.
+>    We shouldn't hear a noble holding forth in the wilderness, or a farmer on a
+>    battlefield; soldiers and guards dominate contested zones, farmers and travelers the
+>    rural roads, nobles and vendors the cities. A per-area role weight on the speaker pick.
 
 **Current architecture (what we change).**
 
@@ -107,9 +113,10 @@ tickArea(areaType):                      -- areaType ∈ {"city","rural","battle
   for each (zone, playersInZone) in buckets:
       region = zoneToRegion[zone]
       team   = faction majority/serverside of that zone (or per-player on send)
-      -- pick a speaker biased toward this zone/region:
-      speaker = resolveSpeaker(faction) with a proximity weight:
+      -- pick a speaker biased toward this zone/region AND suited to the locale's role mix:
+      speaker = resolveSpeaker(faction) with a per-character weight:
                   chattiness × proximityFactor(char, zone, region)
+                             × areaRoleFactor(char.role, areaType)
       item    = pickLine(candidatesFor(faction), speaker, tick) with ctx.area = areaType
       deliver rendered line to playersInZone via SendBroadcastMessage
 ```
@@ -118,6 +125,38 @@ tickArea(areaType):                      -- areaType ∈ {"city","rural","battle
   smaller boost when `char.homeRegion == region`, neutral otherwise. A new
   `proximityStrength` config (like `areaMatchStrength`) tunes it; `1` disables (global
   behavior). This realizes "more likely to hear a character near their hometown."
+- **`areaRoleFactor(role, areaType)`** — realizes "no noble in the wilderness." A
+  declarative `AREA_ROLE_BIAS` map (area bucket → `{role -> factor}`, missing role ⇒
+  `1.0`) lives in `data/traits.lua` alongside the shipped roster bias tables
+  (`CITY_BIAS`/`GENDER_BIAS`/`FACTION_BIAS`) and reuses the same convention. It's a
+  *speaker-selection* multiplier over the existing roster (not a generation-time pick),
+  so it folds into the speaker weight beside `proximityFactor` rather than going through
+  `weightedPick`. Softened by `areaRoleStrength` with the shipped `scaleModifier` form
+  `eff = 1 + (factor-1)*s` (`s=0` ⇒ off, every role equally likely for the locale; `s=1`
+  ⇒ as authored). A factor of `0` excludes a role *for that area only* (a noble simply
+  isn't chosen as the wilderness speaker) — the character still exists and still speaks
+  in cities, so the trait layer's "never globally impossible" invariant holds. If every
+  candidate in a bucket zeroes out, fall back to a chattiness-only pick so a populated
+  zone is never silent (mirrors `weightedPick`'s `total <= 0` guard).
+
+  ```lua
+  -- data/traits.lua — keyed by AREA bucket (one of AREAS); author a few strong, legible
+  -- affinities per area, not a full role×area matrix. Zeros are in-context exclusions.
+  R.AREA_ROLE_BIAS = {
+    city        = { noble = 1.6, vendor = 1.4, guard = 1.3, farmer = 0.5 },
+    rural       = { farmer = 2.2, adventurer = 1.4, sailor = 1.2, noble = 0.2, mage = 0.4 },
+    wilderness  = { adventurer = 2.0, sailor = 1.3, noble = 0, vendor = 0.2, innkeeper = 0.2 },
+    battlefield = { soldier = 3.0, guard = 2.0, adventurer = 1.4, noble = 0, farmer = 0.2 },
+    coast       = { sailor = 2.5, vendor = 1.2, noble = 0.3 },
+    road        = { adventurer = 1.6, vendor = 1.4, sailor = 1.2 },
+  }
+  -- An area with no entry, or a role absent from its map, contributes no tilt.
+  ```
+
+  Note this complements the existing character `area` affinity (a softer, per-character
+  locale lean): `area` nudges *which characters* prefer a locale; `AREA_ROLE_BIAS` gates
+  *which roles* are plausible to be heard there, which is what "no noble in the wilds"
+  asks for. Keep both — they stack multiplicatively on the speaker weight.
 - **City-topic bias** — `cityFor()` gains a listener-aware mode: when delivering to a
   zone, bias `%city%` toward `zoneToNearestCity[zone]` (so players near Stormwind hear
   Stormwind chatter), falling back to the speaker's `homeCity`, then random. Thread the
@@ -167,6 +206,7 @@ local ruralTalkTime        = {15000, 45000}
 local battlefieldTalkTime  = {6000, 18000}
 local proximityStrength    = 3.0    -- home-zone/region speaker boost; 1 = off
 local cityTopicBias        = true   -- bias %city% toward listener's nearest capital
+local areaRoleStrength     = 1.0    -- area-appropriate speaker roles; 0 = off (any role)
 ```
 
 #### Build order
@@ -176,8 +216,10 @@ local cityTopicBias        = true   -- bias %city% toward listener's nearest cap
    `zones`/`cities` entry resolves.
 2. **Character home zone** — add `homeZone`/`homeRegion` to `generateCharacter`
    (faction/role biased); leave `area`/`homeCity` untouched.
-3. **Proximity + city-topic** — add `proximityFactor`, thread delivery-zone into the
-   speaker pick and `cityFor`; behind `proximityStrength`/`cityTopicBias`.
+3. **Proximity + city-topic + area-role** — add `proximityFactor` and `areaRoleFactor`
+   (+ the `AREA_ROLE_BIAS` map in `data/traits.lua`), thread delivery-zone into the
+   speaker pick and `cityFor`; behind `proximityStrength` / `cityTopicBias` /
+   `areaRoleStrength`. All three are multiplicative terms on the speaker weight.
 4. **Per-zone delivery** — implement `tickArea` and per-zone bucketed delivery behind
    `enableZoneChat`; keep legacy `emit` for the off path.
 5. **Per-area timers** — swap the faction-drivers for the three area-drivers (only when
@@ -189,6 +231,11 @@ local cityTopicBias        = true   -- bias %city% toward listener's nearest cap
 - Unmapped zone → default area + no proximity boost; never errors.
 - Zero players in an area-type → skip silently (no cursor churn), as today.
 - A character with no `homeZone` (pre-existing/edge) → `proximityFactor` returns 1.0.
+- A role absent from an area's `AREA_ROLE_BIAS` entry, or an area with no entry →
+  `areaRoleFactor` returns 1.0 (no tilt). If every candidate speaker in a bucket zeroes
+  out, fall back to a chattiness-only pick so a populated zone never goes silent.
+- `AREA_ROLE_BIAS` zeros are in-context exclusions only — they must never make a role
+  globally impossible (it still appears in roster generation and speaks in other areas).
 - `enableZoneChat=false` → byte-for-byte the current global behavior (regression-test
   this path stays intact).
 - Player count scaling — confirm one rendered string is reused per (zone, faction)
@@ -203,7 +250,11 @@ local cityTopicBias        = true   -- bias %city% toward listener's nearest cap
 - `tools/lua_check.py` on touched files; a map-coverage check (every `zones`/`cities` entry
   is classified).
 - Offline: `proximityFactor` returns the expected ordering (home-zone > home-region >
-  elsewhere) and `cityFor` picks the nearest capital for a sample of zones.
+  elsewhere) and `cityFor` picks the nearest capital for a sample of zones. Sampling
+  check: over many ticks, P(speaker=noble | wilderness/battlefield) ≈ 0 while nobles
+  still speak in cities; soldiers dominate the battlefield speaker mix; `areaRoleStrength=0`
+  collapses the per-area role histogram back to the chattiness-only baseline. Every
+  `AREA_ROLE_BIAS` zero is intentional and no role is globally excluded.
 - In-game matrix: two players in different zones see different speakers/lines; a player
   in Elwynn hears Stormwind-flavored `%city%`; a battlefield zone fires on the bursty
   cadence; `enableZoneChat=false` reproduces the old global chatter; log a player out
