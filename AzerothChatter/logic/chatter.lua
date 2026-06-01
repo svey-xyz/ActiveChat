@@ -28,6 +28,8 @@ local homeCityBias            = config.homeCityBias
 local roleMoodMatchStrength   = config.roleMoodMatchStrength
 local areaMatchStrength       = config.areaMatchStrength
 local genderRatio             = config.genderRatio or { male = 45, female = 45, neutral = 10 }
+local enableTraitCorrelation  = config.enableTraitCorrelation
+local traitCorrelationStrength = config.traitCorrelationStrength or 1.0
 -- Context flags also read by the line scorer (timeFactor/seasonFactor/eventFactor):
 local enableContextAware      = config.enableContextAware
 local enableTimeContext       = config.enableTimeContext
@@ -75,6 +77,9 @@ local ROLES          = rosterDefs.ROLES
 local PERSONALITIES  = rosterDefs.PERSONALITIES
 local allianceCities = rosterDefs.allianceCities
 local hordeCities    = rosterDefs.hordeCities
+local GENDER_BIAS    = rosterDefs.GENDER_BIAS  or {}
+local FACTION_BIAS   = rosterDefs.FACTION_BIAS or {}
+local CITY_BIAS      = rosterDefs.CITY_BIAS    or {}
 t.cc = rosterDefs.colors                     -- per-character name-colour palette
 
 -- FORWARD-COMPAT no-op: the emit path calls this so wiring a real chat-topic buffer
@@ -385,25 +390,89 @@ local function generateName(faction, role, personality, gender)
     return name, parts
 end
 
--- Weighted roulette over ROLES by their .weight field -> a role key.
-local function pickRoleWeighted()
-    local total = 0
-    for _, k in ipairs(roleKeys) do total = total + (ROLES[k].weight or 1) end
+-- Generic weighted roulette over a key list. baseOf(k) yields the base weight;
+-- modifiers is an optional ordered list of {key -> factor} maps stacked
+-- multiplicatively (missing key => 1.0, nil-safe). A modifier may zero a weight in
+-- one context, but if EVERY effective weight ends up <= 0 we fall back to a uniform
+-- pick so generation never stalls. Negative effective weights are clamped to 0.
+local function weightedPick(keys, baseOf, modifiers)
+    local eff, total = {}, 0
+    for _, k in ipairs(keys) do
+        local w = baseOf(k) or 1
+        if modifiers then
+            for _, m in ipairs(modifiers) do
+                if (m) and (m[k]) then w = w * m[k] end
+            end
+        end
+        if (w < 0) then w = 0 end
+        eff[k], total = w, total + w
+    end
+    if (total <= 0) then return keys[math.random(#keys)] end
     local r, acc = math.random() * total, 0
-    for _, k in ipairs(roleKeys) do
-        acc = acc + (ROLES[k].weight or 1)
+    for _, k in ipairs(keys) do
+        acc = acc + eff[k]
         if (r <= acc) then return k end
     end
-    return roleKeys[#roleKeys]  -- float-rounding fallback
+    return keys[#keys]  -- float-rounding fallback
+end
+
+-- Soften a conditional modifier map toward 1.0 by traitCorrelationStrength s:
+-- eff = 1 + (factor-1)*s. s=1 => authored factors; s=0 => all factors collapse to 1.0
+-- (pure base weights), so the strength knob can disable correlations without editing
+-- tables. nil/empty in => nil out (no tilt). Every Part B/C modifier flows through here.
+local function scaleModifier(m)
+    if (not m) then return nil end
+    if (traitCorrelationStrength == 1.0) then return m end
+    local out = {}
+    for k, f in pairs(m) do out[k] = 1 + (f - 1) * traitCorrelationStrength end
+    return out
 end
 
 -- generateCharacter(faction) -> a full character table, registered into roster /
 -- rosterByFaction with its name marked used. Does NOT enforce maxCharacters --
 -- the cap is checked by resolveSpeaker before calling this.
 local function generateCharacter(faction)
-    local role        = pickRoleWeighted()
-    local personality = moodKeys[math.random(#moodKeys)]
-    local gender      = rollGender()
+    -- Conditioning traits first so they can tilt role/mood. gender and homeCity are
+    -- rolled before role/mood, then fed into the pickers via the gender/faction/city
+    -- bias maps below. homeCity is a flat draw (cities are roughly equal); only its
+    -- affinity (CITY_BIAS) tilts the resident, not its draw frequency.
+    local gender   = rollGender()
+    local homeCity = (faction == "horde")
+        and pickFrom(hordeCities)
+        or  pickFrom(allianceCities)
+
+    local genderRoles  = GENDER_BIAS[gender]   and GENDER_BIAS[gender].roles
+    local genderMoods  = GENDER_BIAS[gender]   and GENDER_BIAS[gender].moods
+    local factionRoles = FACTION_BIAS[faction] and FACTION_BIAS[faction].roles
+    local cityRoles    = CITY_BIAS[homeCity]   and CITY_BIAS[homeCity].roles
+    local cityMoods    = CITY_BIAS[homeCity]   and CITY_BIAS[homeCity].moods
+
+    -- Role always uses its base weight. Conditional modifiers (faction/gender/home-city)
+    -- apply only when the correlation layer is on. All factors are softened by
+    -- traitCorrelationStrength via scaleModifier.
+    local roleMods
+    if (enableTraitCorrelation) then
+        roleMods = {
+            scaleModifier(factionRoles),
+            scaleModifier(genderRoles),
+            scaleModifier(cityRoles),
+        }
+    end
+    local role = weightedPick(roleKeys, function(k) return ROLES[k].weight end, roleMods)
+
+    -- Personality honors its weight + role/gender/home-city bias only when the
+    -- correlation layer is on; off => legacy uniform draw (preserves today's histogram).
+    local personality
+    if (enableTraitCorrelation) then
+        local moodMods = {
+            scaleModifier(ROLES[role].moodBias),
+            scaleModifier(genderMoods),
+            scaleModifier(cityMoods),
+        }
+        personality = weightedPick(moodKeys, function(k) return PERSONALITIES[k].weight end, moodMods)
+    else
+        personality = moodKeys[math.random(#moodKeys)]
+    end
 
     -- area: biased to the role's default area (~65%), else a random AREAS member,
     -- so the roster reads roughly role-typed without being rigid.
@@ -414,10 +483,6 @@ local function generateCharacter(faction)
     else
         area = AREAS[math.random(#AREAS)]
     end
-
-    local homeCity = (faction == "horde")
-        and pickFrom(hordeCities)
-        or  pickFrom(allianceCities)
 
     local name, nameParts = generateName(faction, role, personality, gender)
 

@@ -89,11 +89,11 @@ These three identity vocabularies are each defined in **exactly one table** in
 only that table — no engine changes needed.
 
 - **`ROLES`** (civic/occupation archetypes). Each entry has name `prefixes`, a
-  roster-frequency `weight`, and a default `area` affinity:
+  roster-frequency `weight`, an optional `moodBias`, and a default `area` affinity:
   `guard`, `citizen`, `vendor`, `innkeeper`, `adventurer`, `soldier`, `mage`, `priest`,
   `craftsman`, `farmer`, `sailor`, `noble`, `drunkard`, `urchin`.
-- **`PERSONALITIES`** (mood descriptors). Each maps to a pool of name epithets and
-  doubles as a line-selection tag:
+- **`PERSONALITIES`** (mood descriptors). Each carries a roster-frequency `weight`, maps
+  to a pool of name epithets, and doubles as a line-selection tag:
   `warm`, `gruff`, `cheerful`, `weary`, `wry`, `boastful`, `nervous`, `solemn`,
   `greedy`, `kindly`, `bitter`, `dreamy`, `brave`, `cowardly`, `gossipy`.
 - **`AREAS`** (locale affinities):
@@ -103,6 +103,34 @@ At generation a character's `area` is biased (~65%) toward its role's default ar
 picked at random — so the roster reads as roughly role-typed without being rigid. How
 the `area` affinity interacts with line tags is covered in
 [authoring.md → The area tag](authoring.md#the-area-tag).
+
+## Trait weighting & correlation
+
+Roles and personalities are **not** rolled with a flat coin — each carries a base
+`weight` so the cast reads like a real population: common folk dominate (citizens and
+farmers are common, nobles rare), and pleasant tempers (`kindly`, `warm`) outnumber dour
+ones (`cowardly`, `dreamy`). Every weight is `> 0`, so no trait is ever globally
+impossible.
+
+Traits also **correlate** at generation. The engine rolls gender and home city first,
+then biases role and mood off them via small affinity maps in `data/traits.lua`:
+
+- **Role → mood** — a craftsman skews `gruff`, a soldier `brave`, a priest `solemn`/`kindly`.
+- **Gender / faction** — light skews (e.g. Horde a touch more martial).
+- **Home city** — a resident's locale tilts their role and mood, so an Ironforge native
+  is likelier a gruff smith and a Darnassus native a dreamy priest.
+
+Two config knobs in `AzerothChatter.lua` govern the correlation layer:
+
+- **`enableTraitCorrelation`** (default `true`) — turn it **off** for the pre-feature
+  behavior: roles still use their base `weight`, but personality is a uniform draw and
+  home city tilts nothing.
+- **`traitCorrelationStrength`** (default `1.0`) — scales every correlation toward
+  neutral; `1.0` is as authored, `0` collapses back to pure base weights (no role/gender/
+  faction/city tilt). Base role and personality weights are always honored regardless.
+
+Home city is still a **flat draw** — locale shapes *who* a resident is, not *how often*
+each capital appears.
 
 ### Future hook: zone-specific chatter
 

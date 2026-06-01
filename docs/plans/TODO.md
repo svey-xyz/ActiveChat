@@ -14,7 +14,7 @@ detail.
 | Gendered tags | [CHARACTERS_PLAN.md](./CHARACTERS_PLAN.md) | Phase 1 Part A + B |
 | Tokenized names/roles ("Sister Cedric" should be gender-correct) | [CHARACTERS_PLAN.md](./CHARACTERS_PLAN.md) | Phase 1 Part A |
 | `%target%` — address another speaker by (short) name | [CHARACTERS_PLAN.md](./CHARACTERS_PLAN.md) | Phase 1 Part C |
-| Weighted traits (more farmers than nobles, kindly > cowardly) + correlations (Ironforge → gruff smith) | [WEIGHTED_TRAITS_PLAN.md](./WEIGHTED_TRAITS_PLAN.md) | Phase 1 Parts A–C |
+| Weighted traits (more farmers than nobles, kindly > cowardly) + correlations (Ironforge → gruff smith) — ✅ DONE | [WEIGHTED_TRAITS_PLAN.md](./WEIGHTED_TRAITS_PLAN.md) | shipped (condensed) |
 | Zone-specific chatter + proximity + per-area timers (drop alliance/horde/shared timers) | [ZONE_AWARE_PLAN.md](./ZONE_AWARE_PLAN.md) | whole doc |
 | Multi-line conversations on their own faster timer/knob | [CONVERSATION_PACING_PLAN.md](./CONVERSATION_PACING_PLAN.md) | whole doc |
 | In-game `.` commands: create a character (pick traits) / inspect a character's traits | [PLAYER_COMMANDS_PLAN.md](./PLAYER_COMMANDS_PLAN.md) | whole doc |
@@ -26,8 +26,8 @@ A. Structured names + gender  ─┬─> B. Gendered line tags + pronoun tokens
    (CHARACTERS Phase 1 Part A) │       (CHARACTERS Phase 1 Part B)
    [DONE]                      ├─> C. %target% address token (CHARACTERS Phase 1 Part C)
                                ├─> Player commands "create" (PLAYER_COMMANDS_PLAN)
-                               └─> W. Weighted/correlated traits (WEIGHTED_TRAITS_PLAN)
-                                      reads gender + homeCity; reorders generateCharacter
+                               └─> W. Weighted/correlated traits (WEIGHTED_TRAITS_PLAN) [DONE]
+                                      read gender + homeCity; reordered generateCharacter
 
 E. Token article/grammar rule ───> D. Context-aware token values
    (CONTEXT_AWARE Phase 8 Part B)    (CONTEXT_AWARE Phase 8 Part A)  [same pool reshape — one pass]
@@ -36,19 +36,20 @@ Zone-aware delivery (ZONE_AWARE_PLAN) ──coordinate──> Conversation pacin
    (per-zone delivery groups)                          (key conversation state by zone)
 ```
 
-Independent tracks: **{A→B,C}**, **{A→W}**, **{E→D}**, **{Zone + Pacing}**, **{Player
-commands (inspect)}** can all proceed in parallel; player-command *creation* waits on
-Part A. W reorders `generateCharacter`, so land it before further character-generation
-changes (i.e. ahead of B/C).
+Independent tracks: **{A→B,C}**, **{E→D}**, **{Zone + Pacing}**, **{Player commands
+(inspect)}** can all proceed in parallel; player-command *creation* waits on Part A. W
+shipped first among the Part-A dependents (it reordered `generateCharacter`), so B/C and
+player-command *creation* now build on the reordered, weighted generator.
 
 ## Suggested build order
 
 1. **A — structured names + gender** — ✅ DONE. Foundation; unblocks B, C, W, and
    command creation. Fixed the "Sister Cedric" bug.
-2. **W — weighted/correlated traits** (needs A; reorders `generateCharacter`, so do it
-   before B/C). Self-contained generation-time layer; makes the cast read like a real
-   population (common folk dominate, few nobles, kindly > cowardly, Ironforge → gruff
-   smith). Parts A→B→C within the plan.
+2. **W — weighted/correlated traits** — ✅ DONE. Self-contained generation-time layer;
+   the cast now reads like a real population (common folk dominate, few nobles,
+   kindly > cowardly, Ironforge → gruff smith). Reordered `generateCharacter` (gender +
+   home city roll before role/mood), so B/C and command *creation* build on it. See the
+   condensed [WEIGHTED_TRAITS_PLAN.md](./WEIGHTED_TRAITS_PLAN.md).
 3. **E then D — token pool reshape** (article rule first, then context tags). One pass
    over the token pools; independent of everything else.
 4. **B — gendered tags + pronoun tokens** (needs A).

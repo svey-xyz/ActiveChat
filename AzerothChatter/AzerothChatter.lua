@@ -37,6 +37,15 @@ return {
     -- raise it to surface more of the neutral pool.
     genderRatio             = { male = 45, female = 45, neutral = 10 },
 
+    -- Trait correlation layer. Base role/personality weights (data/traits.lua) are
+    -- ALWAYS honored. This flag governs only the correlation layer: with it OFF,
+    -- personality reverts to a uniform draw (legacy behavior) and conditional
+    -- modifiers (role/gender/faction/city skews) are skipped; ON, personality uses
+    -- its authored weight and modifiers apply. strength scales each modifier toward
+    -- 1.0 (eff = 1 + (factor-1)*s): 0 = base weights only, 1 = as authored.
+    enableTraitCorrelation  = true,
+    traitCorrelationStrength = 1.0,
+
     -- Context-aware chatter. When a flag is off (or its API is missing) that
     -- dimension falls back to random behaviour -- no silent characters, no errors.
     enableContextAware   = true,    -- master switch for the whole context feature

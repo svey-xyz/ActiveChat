@@ -70,9 +70,12 @@ overrides table; `generateCharacter(faction)` becomes `createCharacter({faction=
 local function createCharacter(opts)
   opts = opts or {}
   local faction     = opts.faction     or (math.random() < 0.5 and "alliance" or "horde")
-  local role        = opts.role        or pickRoleWeighted()
-  local personality = opts.personality or moodKeys[math.random(#moodKeys)]
-  local gender      = opts.gender      or rollGender()           -- from CHARACTERS_PLAN Phase 1 Part A
+  local gender      = opts.gender      or rollGender()           -- roll first; conditions role/mood
+  -- role + personality now come from the weighted/correlated picker (WEIGHTED_TRAITS,
+  -- shipped): weightedPick over base weights × gender/faction/home-city bias maps.
+  -- A create command may pass explicit role/personality to bypass the weighting.
+  local role        = opts.role        or rolledRole(faction, gender, homeCity)
+  local personality = opts.personality or rolledMood(faction, gender, homeCity, role)
   local area        = opts.area        or biasedArea(role)       -- existing role→area bias
   local name        = opts.name        or generateName(faction, role, personality, gender)
   -- …assemble, validate name uniqueness, register in roster/rosterByFaction, return
