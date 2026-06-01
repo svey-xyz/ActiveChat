@@ -1,7 +1,0 @@
-{"expectations":[
-{"text":"Registers gossip hello(1) and select(2) on entry 800001","passed":true,"evidence":"RegisterCreatureGossipEvent(800001,1/2,...)"},
-{"text":"Hello builds menu via GossipMenuAddItem + GossipSendMenu","passed":true,"evidence":"3x GossipMenuAddItem + GossipSendMenu(1, creature)"},
-{"text":"Select dispatches intid and closes via GossipComplete","passed":true,"evidence":"if intid==... ; player:GossipComplete()"},
-{"text":"Teleport with plausible SW/Org coords","passed":true,"evidence":"Teleport(0,-8833.38,...) and Teleport(1,1629.36,...)"},
-{"text":"Repair uses real durability method","passed":true,"evidence":"DurabilityRepairAll(true,1.0,false)"},
-{"text":"Leading event param, real methods","passed":true,"evidence":"both callbacks (event, player, creature...); GossipClearMenu used"}]}

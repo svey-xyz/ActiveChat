@@ -1,7 +1,0 @@
-{"expectations":[
-{"text":"Registers ON_COMMAND (42) via RegisterPlayerEvent","passed":true,"evidence":"RegisterPlayerEvent(42, OnCommand)"},
-{"text":"function(event, player, command) matches command=='heal'","passed":true,"evidence":"if command:lower() ~= 'heal'"},
-{"text":"Gates behind IsGM()","passed":true,"evidence":"if not player:IsGM() then return -- NOTE: no nil guard, errors if run from console"},
-{"text":"Heals caster to full","passed":true,"evidence":"player:SetHealth(player:GetMaxHealth())"},
-{"text":"Heals GetSelection() target with nil check","passed":true,"evidence":"if target then ... (no IsAlive check)"},
-{"text":"Returns false when handled","passed":true,"evidence":"return false at end"}]}

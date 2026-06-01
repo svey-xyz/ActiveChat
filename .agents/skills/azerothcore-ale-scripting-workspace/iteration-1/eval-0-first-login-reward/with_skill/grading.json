@@ -1,7 +1,0 @@
-{"expectations":[
-{"text":"Registers ON_FIRST_LOGIN (30) via RegisterPlayerEvent","passed":true,"evidence":"RegisterPlayerEvent(30, OnFirstLogin)"},
-{"text":"Callback first param event, second player","passed":true,"evidence":"function OnFirstLogin(event, player)"},
-{"text":"5 gold via copper math","passed":true,"evidence":"ModifyMoney(WELCOME_GOLD * COPPER_PER_GOLD) = 5*10000"},
-{"text":"AddItem(6948,1)","passed":true,"evidence":"player:AddItem(WELCOME_ITEM, WELCOME_ITEM_COUNT) with WELCOME_ITEM=6948"},
-{"text":"Welcome message includes GetName()","passed":true,"evidence":"SendBroadcastMessage(... player:GetName() ...)"},
-{"text":"Single valid .lua, no invented methods","passed":true,"evidence":"All methods real; clean config block"}]}
