@@ -1,0 +1,47 @@
+--[[
+  ActiveChat configuration -- the single source of truth for every tunable knob.
+
+  Required by npcTalk.lua (the engine) and context.lua; each pulls the values it
+  needs into locals. Edit values HERE, not in the engine. Returns one flat table.
+
+  NOTE: a nil-valued key (maxCharactersPerFaction) is simply absent from the table;
+  reading it still yields nil, which is the intended "unset" sentinel.
+]]--
+
+return {
+    -- Master switches.
+    enableScript      = true,   -- master on/off for the whole script
+    enableFactionChat = true,   -- true = gate alliance/horde lines by faction
+                                -- false = legacy: broadcast everything to everyone
+
+    -- Spam intervals (ms). 1 second = 1000.
+    talk_time         = {1000, 10000},   -- shared WORLD chat
+    faction_talk_time = {8000, 20000},   -- faction WORLD chat (per faction)
+
+    -- Roster / selection-engine. The roster starts empty and grows lazily on demand
+    -- up to maxCharacters, then self-balances (reuses existing voices) at the cap.
+    maxCharacters           = 128,   -- cap on the lazily-grown roster
+    maxCharactersPerFaction = nil,   -- optional per-faction sub-cap (nil = share maxCharacters)
+    newCharacterWeight      = 8,     -- virtual "spawn a new character" weight vs existing chattiness
+    lineCooldownTicks       = 8,     -- default per-line repeat cooldown (ticks), in the line scorer
+    homeCityBias            = true,  -- bias %city% toward the speaker's home city
+    roleMoodMatchStrength   = 3.0,   -- how hard role/mood matching is weighted (1 = off)
+    areaMatchStrength       = 3.0,   -- how hard area matching is weighted (1 = off)
+
+    -- Context-aware chatter. When a flag is off (or its API is missing) that
+    -- dimension falls back to random behaviour -- no silent characters, no errors.
+    enableContextAware   = true,    -- master switch for the whole context feature
+    enableTimeContext    = true,    -- clock-aware times + %timeofday%
+    enableEventContext   = true,    -- active-event gating + %event%
+    enableSeasonContext  = true,    -- month-derived season + %season%
+    timeMatchStrength    = 3.0,     -- like areaMatchStrength; 1 = off
+    seasonMatchStrength  = 3.0,     -- like areaMatchStrength; 1 = off
+    contextRefreshMs     = 60000,   -- ctx cache TTL (ms)
+    eventApproachDays    = 5,       -- "approach" window before an event starts
+    eventAfterDays       = 3,       -- "after" window once an event ends
+    enableEventBurst     = false,   -- one-shot "festival has begun" burst on activation
+
+    -- Optional WorldDBQuery string to source NPC names from the DB. Blank => names
+    -- come from npc_name.lua.
+    ns = "",
+}

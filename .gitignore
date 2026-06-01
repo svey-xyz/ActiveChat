@@ -1,2 +1,7 @@
 # MacOS files
 ._*
+.DS_Store
+
+# Skill-development eval artifacts (benchmarks, gradings, per-eval outputs). These are
+# byproducts of tuning the bundled ALE skill, not part of the ActiveChat script.
+.agents/skills/azerothcore-ale-scripting-workspace/

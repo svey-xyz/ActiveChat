@@ -15,7 +15,11 @@ day, season, and active in-game holidays.
 
 | File | Size | Load it? |
 |---|---|---|
-| `ActiveChat/npcTalk.lua` | ~89 KB / ~2.2k lines | Yes — the engine. Read what you need. |
+| `ActiveChat/npcTalk.lua` | ~47 KB / ~1.0k lines | Yes — the engine: parsing, scoring, roster, conversation, render/emit, timers. |
+| `ActiveChat/config.lua` | ~3 KB | Yes — all tunable knobs (flags, intervals, caps, strengths). Edit values here. |
+| `ActiveChat/context.lua` | ~19 KB | Time/event/season cache (`ctx`, `refreshCtx`) + the `%event%`/`%season%`/`%timeofday%` resolvers. Load when touching context logic. |
+| `ActiveChat/data/pools.lua` | ~17 KB | Only when editing `%token%` vocabulary — placeholder pools + their `selectRandom*` accessors. |
+| `ActiveChat/data/roster_defs.lua` | ~4 KB | Roster identity tables (`AREAS`, `ROLES`, `PERSONALITIES`, home cities, colours). |
 | `ActiveChat/context_map.lua` | ~4 KB | Yes — small context vocabulary/maps. |
 | `ActiveChat/npc_name.lua` | ~6 KB | Yes — name pools. |
 | `ActiveChat/talk_text/npc_text.lua` | **~315 KB / 1.5k lines** | **No — see below.** |
@@ -69,22 +73,41 @@ python3 talk_text/gen_manifest.py      # needs: pip3 install lupa --break-system
 
 ## Editing tokens
 
-Token substitution is centralized in `renderTokens` (`npcTalk.lua`). Each token is
-one `string.gsub` call backed by a `selectRandomX` helper or a context resolver
-(`resolveEvent`, `resolveSeason`, `resolveTimeOfDay`, …). To add a token: add its
-source pool/helper, add the `gsub` line in `renderTokens`, then use it in chatter.
-Context-aware tokens (`%event%`, `%season%`, `%timeofday%`, `%nextevent%`,
-`%lastevent%`) resolve from the `ctx` cache and fall back to random when context is
-off or unavailable — preserve that fallback invariant.
+Token substitution runs in a single pass in `renderTokens` (`npcTalk.lua`): one
+`string.gsub(txt, "%%(%w+)%%", …)` dispatches each `%token%` through the
+`tokenResolvers` table (defined just above `renderTokens`). Each entry maps a token
+name to a resolver called as `f(speaker, ctx, item)` — a `pools.selectRandom*`
+accessor (from `data/pools.lua`) or a context resolver from `context.lua`
+(`resolveEvent`, `resolveSeason`, `resolveTimeOfDay`, …). To add a token: add its pool
++ accessor in `data/pools.lua` (or a resolver in `context.lua`), add ONE line to
+`tokenResolvers`, then use it in chatter — no per-token gsub plumbing. An unmapped `%token%` is left intact (visible,
+never crashes), so orphans don't error. Context-aware tokens (`%event%`, `%season%`,
+`%timeofday%`, `%nextevent%`, `%lastevent%`) resolve from the `ctx` cache and fall
+back to random when context is off or unavailable — preserve that fallback invariant.
 
-## Engine map (so you can jump, not scroll)
+## Module map (so you can jump to the right file, not scroll)
 
-Data pools & `selectRandomX` helpers → context cache (`ctx`, `refreshCtx`) →
-tag normalization (`normalize*`, `makeItem`, `buildItems`) → character roster
-(`generateCharacter`, `resolveSpeaker`, `pickCharacter`) → line scoring
-(`scoreLine` and its `*Factor` functions) → conversation state (`nextLine`,
-`assembleCast`) → rendering & emission (`renderTokens`, `formatWorld`, `emit`,
-`speak`) → timers (`CreateLuaEvent`). Config flags are at the top of the file.
+The engine is split across `require`d modules (mod-ale adds the script dir **and its
+subdirs** to `package.path`, so bare `require("pools")`/`require("context")` resolve
+files in `data/` and the root alike):
+
+- `config.lua` — every tunable flag/value. Single source of truth; `npcTalk.lua` and
+  `context.lua` each pull what they need into locals. **Change behaviour here.**
+- `data/pools.lua` (`pools`) — `%token%` vocabulary + `selectRandom*` accessors; the
+  engine never indexes the raw tables.
+- `data/roster_defs.lua` (`rosterDefs`) — `AREAS`/`ROLES`/`PERSONALITIES`, home cities,
+  colour palette. `roleKeys`/`moodKeys` are derived from these in the engine.
+- `context.lua` (`context`) — the time/event/season cache (`ctx`, `refreshCtx`,
+  `nearestEvents`, schedule read) and the `%event%`/`%nextevent%`/`%lastevent%`/
+  `%season%`/`%timeofday%` resolvers. The engine captures `context.ctx` once (it's
+  mutated in place) and registers its `fireEventBurst` via `context.setEventBurstHook`.
+
+Then within `npcTalk.lua`: config + module wiring → tag normalization (`normalize*`,
+`makeItem`, `buildItems`) → character roster (`generateCharacter`, `resolveSpeaker`,
+`pickCharacter`) → line scoring (`scoreLine` and its `*Factor` functions, which read
+`ctx` + the context flags) → conversation state (`nextLine`, `assembleCast`) →
+rendering & emission (`tokenResolvers`/`renderTokens`, `formatWorld`, `emit`, `speak`)
+→ optional event-burst (default off) → timers (`CreateLuaEvent`).
 
 ## Verify before finishing
 
@@ -93,7 +116,7 @@ checks well with `lupa`:
 
 ```bash
 cd ActiveChat
-python3 -c "from lupa import LuaRuntime; L=LuaRuntime(); [L.compile(open(f).read()) for f in ['npcTalk.lua','context_map.lua','npc_name.lua']]; print('OK')"
+python3 -c "from lupa import LuaRuntime; L=LuaRuntime(); [L.compile(open(f).read()) for f in ['npcTalk.lua','config.lua','context.lua','data/pools.lua','data/roster_defs.lua','context_map.lua','npc_name.lua']]; print('OK')"
 ```
 
 After chatter edits, also confirm no orphan tokens (every `%token%` in the chatter is
