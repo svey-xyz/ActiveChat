@@ -29,6 +29,14 @@ return {
     roleMoodMatchStrength   = 3.0,   -- how hard role/mood matching is weighted (1 = off)
     areaMatchStrength       = 3.0,   -- how hard area matching is weighted (1 = off)
 
+    -- Per-character gender. Rolled once at generation; drives the gender-agreeing
+    -- first-name sub-pool (data/names.lua) and role prefix (data/traits.lua), and
+    -- backs the pronoun tokens. Weights are relative (need not sum to 100). "neutral"
+    -- covers genderless flavour (gnome/utility + surname-style names) and is the
+    -- fallback when a gender bucket is empty -- a low share keeps those names rare;
+    -- raise it to surface more of the neutral pool.
+    genderRatio             = { male = 45, female = 45, neutral = 10 },
+
     -- Context-aware chatter. When a flag is off (or its API is missing) that
     -- dimension falls back to random behaviour -- no silent characters, no errors.
     enableContextAware   = true,    -- master switch for the whole context feature

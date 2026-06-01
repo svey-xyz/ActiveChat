@@ -13,23 +13,26 @@ local R = {}
 -- The six locale affinities. Characters and tagged lines carry one; untagged = global.
 R.AREAS = { "city", "rural", "battlefield", "coast", "wilderness", "road" }
 
--- Civic/occupation archetypes. prefixes -> "{Role} {first}" name prefixes;
--- weight -> roster frequency; area -> default affinity (must be one of AREAS).
+-- Civic/occupation archetypes. prefixes -> "{Role} {first}" name prefixes, keyed by
+-- gender { male, female, neutral } so the title agrees with the character's gender
+-- (buildName picks prefixes[gender] or prefixes.neutral). Genderless roles define
+-- only `neutral`. weight -> roster frequency; area -> default affinity (must be one
+-- of AREAS). A flat list (legacy shape) is still accepted and treated as neutral.
 R.ROLES = {
-    guard      = { prefixes = {"Guardsman", "Sentinel", "Watchman"},      weight = 7, area = "city" },
-    citizen    = { prefixes = {"Citizen", "Townsfolk", "Commoner"},       weight = 9, area = "city" },
-    vendor     = { prefixes = {"Merchant", "Trader", "Peddler"},          weight = 7, area = "city" },
-    innkeeper  = { prefixes = {"Innkeep", "Barkeep", "Host"},             weight = 6, area = "city" },
-    adventurer = { prefixes = {"Adventurer", "Wanderer", "Seeker"},       weight = 6, area = "wilderness" },
-    soldier    = { prefixes = {"Sergeant", "Private", "Trooper"},         weight = 5, area = "battlefield" },
-    mage       = { prefixes = {"Magus", "Archmage", "Conjurer"},          weight = 4, area = "city" },
-    priest     = { prefixes = {"Father", "Sister", "Brother"},            weight = 4, area = "city" },
-    craftsman  = { prefixes = {"Smith", "Mason", "Tinker"},               weight = 5, area = "city" },
-    farmer     = { prefixes = {"Farmer", "Goodman", "Goodwife"},          weight = 6, area = "rural" },
-    sailor     = { prefixes = {"Sailor", "Deckhand", "Bosun"},            weight = 4, area = "coast" },
-    noble      = { prefixes = {"Lord", "Lady", "Baron"},                  weight = 3, area = "city" },
-    drunkard   = { prefixes = {"Old", "Sloshed", "Tipsy"},                weight = 4, area = "city" },
-    urchin     = { prefixes = {"Little", "Ragged", "Street"},             weight = 4, area = "city" },
+    guard      = { prefixes = { male = {"Guardsman", "Watchman"}, female = {"Guardswoman", "Watchwoman"}, neutral = {"Sentinel"} },           weight = 7, area = "city" },
+    citizen    = { prefixes = { neutral = {"Citizen", "Townsfolk", "Commoner"} },                                                              weight = 9, area = "city" },
+    vendor     = { prefixes = { neutral = {"Merchant", "Trader", "Peddler"} },                                                                 weight = 7, area = "city" },
+    innkeeper  = { prefixes = { neutral = {"Innkeep", "Barkeep", "Host"} },                                                                    weight = 6, area = "city" },
+    adventurer = { prefixes = { neutral = {"Adventurer", "Wanderer", "Seeker"} },                                                              weight = 6, area = "wilderness" },
+    soldier    = { prefixes = { neutral = {"Sergeant", "Private", "Trooper"} },                                                                weight = 5, area = "battlefield" },
+    mage       = { prefixes = { neutral = {"Magus", "Archmage", "Conjurer"} },                                                                 weight = 4, area = "city" },
+    priest     = { prefixes = { male = {"Father", "Brother"}, female = {"Sister"}, neutral = {"Acolyte"} },                                    weight = 4, area = "city" },
+    craftsman  = { prefixes = { neutral = {"Smith", "Mason", "Tinker"} },                                                                      weight = 5, area = "city" },
+    farmer     = { prefixes = { male = {"Goodman"}, female = {"Goodwife"}, neutral = {"Farmer"} },                                             weight = 6, area = "rural" },
+    sailor     = { prefixes = { neutral = {"Sailor", "Deckhand", "Bosun"} },                                                                   weight = 4, area = "coast" },
+    noble      = { prefixes = { male = {"Lord", "Baron"}, female = {"Lady", "Baroness"}, neutral = {"Noble"} },                                weight = 3, area = "city" },
+    drunkard   = { prefixes = { neutral = {"Old", "Sloshed", "Tipsy"} },                                                                       weight = 4, area = "city" },
+    urchin     = { prefixes = { neutral = {"Little", "Ragged", "Street"} },                                                                    weight = 4, area = "city" },
 }
 
 -- Personality descriptors -> epithet pool for the "{first}, {epithet}" name pattern;

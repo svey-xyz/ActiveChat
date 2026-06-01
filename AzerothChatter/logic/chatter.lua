@@ -27,6 +27,7 @@ local lineCooldownTicks       = config.lineCooldownTicks
 local homeCityBias            = config.homeCityBias
 local roleMoodMatchStrength   = config.roleMoodMatchStrength
 local areaMatchStrength       = config.areaMatchStrength
+local genderRatio             = config.genderRatio or { male = 45, female = 45, neutral = 10 }
 -- Context flags also read by the line scorer (timeFactor/seasonFactor/eventFactor):
 local enableContextAware      = config.enableContextAware
 local enableTimeContext       = config.enableTimeContext
@@ -286,46 +287,102 @@ for k in pairs(PERSONALITIES) do moodKeys[#moodKeys + 1] = k end
 
 -- generateName -> display string via four weighted patterns: {first last} ~55%,
 -- {Role first} ~20%, {first, epithet} ~15%, {first} ~10%. First names from
--- t.d[faction], surnames from t.d.surnames. Deduped vs usedNames (12-try cap).
+-- t.d[faction] (gender-matched sub-pool), surnames from t.d.surnames. Deduped vs
+-- usedNames (12-try cap).
 local function pickFrom(list)
     return list[math.random(#list)]
 end
 
-local function buildName(faction, role, personality)
-    local firsts   = t.d[faction]
+-- First-name pool for a faction+gender. New shape is a gender map
+-- {male,female,neutral}; fall back to neutral, then any populated bucket, then the
+-- surname pool. A legacy flat list (no gender keys) is treated as neutral -- mirrors
+-- the flat-list-as-surnames fallback in t.init, so old name files still load.
+local function firstNamePool(faction, gender)
+    local f = t.d[faction]
+    if (type(f) ~= "table") then return t.d.surnames end
+    if (f[1] ~= nil) then return f end                        -- legacy flat list
+    local pool = f[gender] or f.neutral
+    if (pool) and (#pool > 0) then return pool end
+    for _, sub in pairs(f) do                                 -- any populated bucket
+        if (type(sub) == "table") and (#sub > 0) then return sub end
+    end
+    return t.d.surnames
+end
+
+-- Role title prefix agreeing with the character's gender. New shape is a gender map;
+-- fall back to neutral, then any populated bucket. A legacy flat list is genderless.
+-- Returns nil when the role has no usable prefix (caller then uses {first last}).
+local function rolePrefix(role, gender)
+    local p = ROLES[role] and ROLES[role].prefixes
+    if (type(p) ~= "table") then return nil end
+    if (p[1] ~= nil) then return (#p > 0) and pickFrom(p) or nil end   -- legacy flat list
+    local bucket = p[gender] or p.neutral
+    if (not bucket) or (#bucket == 0) then
+        for _, b in pairs(p) do
+            if (type(b) == "table") and (#b > 0) then bucket = b; break end
+        end
+    end
+    if (bucket) and (#bucket > 0) then return pickFrom(bucket) end
+    return nil
+end
+
+-- buildName -> displayName, nameParts. nameParts keeps the chosen components
+-- (prefix/first/surname/epithet) so address (%target%) and pronoun features can reuse
+-- them instead of re-parsing the finished string. `first` is always set.
+local function buildName(faction, role, personality, gender)
+    local firsts = firstNamePool(faction, gender)
     if (not firsts) or (#firsts == 0) then firsts = t.d.surnames end
-    local first    = pickFrom(firsts)
-    local roll     = math.random(100)
+    local first  = pickFrom(firsts)
+    local parts  = { first = first }
+    local roll   = math.random(100)
     if (roll <= 55) then
         -- {first} {last} (~55%)
-        return first .. " " .. pickFrom(t.d.surnames)
+        parts.surname = pickFrom(t.d.surnames)
+        return first .. " " .. parts.surname, parts
     elseif (roll <= 75) then
-        -- {Role} {first} (~20%)
-        local prefixes = ROLES[role] and ROLES[role].prefixes
-        if (prefixes) and (#prefixes > 0) then
-            return pickFrom(prefixes) .. " " .. first
+        -- {Role} {first} (~20%) -- prefix agrees with gender (the "Sister Cedric" fix)
+        local prefix = rolePrefix(role, gender)
+        if (prefix) then
+            parts.prefix = prefix
+            return prefix .. " " .. first, parts
         end
-        return first .. " " .. pickFrom(t.d.surnames)  -- defensive fallback
+        parts.surname = pickFrom(t.d.surnames)                -- defensive fallback
+        return first .. " " .. parts.surname, parts
     elseif (roll <= 90) then
         -- {first}, {epithet} (~15%)
         local epithets = PERSONALITIES[personality] and PERSONALITIES[personality].epithets
         if (epithets) and (#epithets > 0) then
-            return first .. ", " .. pickFrom(epithets)
+            parts.epithet = pickFrom(epithets)
+            return first .. ", " .. parts.epithet, parts
         end
-        return first  -- defensive fallback
+        return first, parts  -- defensive fallback
     else
         -- {first} bare (~10%)
-        return first
+        return first, parts
     end
 end
 
-local function generateName(faction, role, personality)
-    local name, guard = nil, 0
+-- Roll a gender from the configured weights (relative; need not sum to 100). Drives
+-- the first-name sub-pool and role prefix so they always agree.
+local function rollGender()
+    local m = genderRatio.male    or 0
+    local f = genderRatio.female  or 0
+    local n = genderRatio.neutral or 0
+    local total = m + f + n
+    if (total <= 0) then return "neutral" end
+    local r = math.random() * total
+    if (r < m)     then return "male"   end
+    if (r < m + f) then return "female" end
+    return "neutral"
+end
+
+local function generateName(faction, role, personality, gender)
+    local name, parts, guard = nil, nil, 0
     repeat
-        name  = buildName(faction, role, personality)
+        name, parts = buildName(faction, role, personality, gender)
         guard = guard + 1
     until (not usedNames[name]) or (guard >= 12)
-    return name
+    return name, parts
 end
 
 -- Weighted roulette over ROLES by their .weight field -> a role key.
@@ -346,6 +403,7 @@ end
 local function generateCharacter(faction)
     local role        = pickRoleWeighted()
     local personality = moodKeys[math.random(#moodKeys)]
+    local gender      = rollGender()
 
     -- area: biased to the role's default area (~65%), else a random AREAS member,
     -- so the roster reads roughly role-typed without being rigid.
@@ -361,8 +419,12 @@ local function generateCharacter(faction)
         and pickFrom(hordeCities)
         or  pickFrom(allianceCities)
 
+    local name, nameParts = generateName(faction, role, personality, gender)
+
     local character = {
-        name         = generateName(faction, role, personality),
+        name         = name,
+        gender       = gender,           -- "male" | "female" | "neutral"
+        nameParts    = nameParts,        -- { prefix?, first, surname?, epithet? } for address/pronoun use
         faction      = faction,
         role         = role,
         personality  = personality,
