@@ -16,14 +16,14 @@ return {
                                 -- false = legacy: broadcast everything to everyone
 
     -- Spam intervals (ms). 1 second = 1000.
-    talk_time         = {1000, 10000},   -- shared WORLD chat
-    faction_talk_time = {8000, 20000},   -- faction WORLD chat (per faction)
+    talk_time         = {8000, 120000},   -- shared WORLD chat
+    faction_talk_time = {20000, 180000},   -- faction WORLD chat (per faction)
 
     -- Roster / selection-engine. The roster starts empty and grows lazily on demand
     -- up to maxCharacters, then self-balances (reuses existing voices) at the cap.
-    maxCharacters           = 128,   -- cap on the lazily-grown roster
+    maxCharacters           = 64,   -- cap on the lazily-grown roster
     maxCharactersPerFaction = nil,   -- optional per-faction sub-cap (nil = share maxCharacters)
-    newCharacterWeight      = 8,     -- virtual "spawn a new character" weight vs existing chattiness
+    newCharacterWeight      = 4,     -- virtual "spawn a new character" weight vs existing chattiness
     lineCooldownTicks       = 8,     -- default per-line repeat cooldown (ticks), in the line scorer
     homeCityBias            = true,  -- bias %city% toward the speaker's home city
     roleMoodMatchStrength   = 3.0,   -- how hard role/mood matching is weighted (1 = off)
