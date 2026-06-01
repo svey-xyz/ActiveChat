@@ -87,10 +87,12 @@ original random helper.
 
 ## How context is sourced (and what happens if it can't be)
 
-Context is read into a cached `ctx` table on a slow cadence (TTL `contextRefreshMs`,
-default 60s) — never recomputed per candidate line. Every source is **capability-
-guarded**: if the API is absent, that field stays neutral, the matching factor stays
-`1.0`, and the token goes random — never an error, never silence.
+The whole context subsystem — the cache, its refresh, and the token resolvers — lives in
+`ActiveChat/context.lua` (required as `context`; the engine captures `context.ctx` once
+and reads it live). Context is read into the cached `ctx` table on a slow cadence (TTL
+`contextRefreshMs`, default 60s) — never recomputed per candidate line. Every source is
+**capability-guarded**: if the API is absent, that field stays neutral, the matching
+factor stays `1.0`, and the token goes random — never an error, never silence.
 
 | Dimension | Source | Fallback if unavailable |
 |---|---|---|

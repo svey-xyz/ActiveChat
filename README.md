@@ -69,7 +69,7 @@ Full authoring format, tag fields, and the scoring model: [docs/authoring.md](do
 
 ## Configuration
 
-All knobs live at the top of `ActiveChat/npcTalk.lua` — master on/off, timer intervals,
+All knobs live in `ActiveChat/config.lua` — master on/off, timer intervals,
 roster cap, match strengths, and the context-aware flags. Full reference:
 [docs/config.md](docs/config.md).
 

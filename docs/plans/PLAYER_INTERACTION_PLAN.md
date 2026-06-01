@@ -107,7 +107,7 @@ these helpers.
 
 > **Cross-reference (context-aware chatter).** Responders read the shared `ctx`
 > table — the single source of "what's true right now" (time/season/active +
-> nearest events) populated by `refreshCtx()` in `npcTalk.lua` — so reaction
+> nearest events) populated by `refreshCtx()` in `context.lua` — so reaction
 > content can carry the same `times`/`events`/`seasons` tags and resolve
 > `%event%`/`%season%`/`%timeofday%` to the live moment. The event-activation burst
 > hook also lives in `refreshCtx()` (behind `enableEventBurst`): when an event flips

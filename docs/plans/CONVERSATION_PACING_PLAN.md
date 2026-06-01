@@ -110,7 +110,7 @@ once the burst timer owns continuation, the ambient tick must yield.)
 
 #### Part B — Config + opt-in
 
-**Config additions (top of `npcTalk.lua`).**
+**Config additions (`config.lua`).**
 
 ```lua
 local enableBurstConversations = true        -- false = legacy one-line-per-ambient-tick

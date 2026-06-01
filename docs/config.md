@@ -1,14 +1,18 @@
 # Config reference
 
-Set these at the top of `ActiveChat/npcTalk.lua`.
+All knobs live in `ActiveChat/config.lua` — a single flat table, the one source of
+truth, read by both the engine (`npcTalk.lua`) and `context.lua`. Edit values there.
 
 ```lua
-local enableScript      = true   -- master on/off
-local enableFactionChat = true   -- true = gate alliance/horde lines by faction
-                                 -- false = legacy: broadcast everything to everyone
+return {
+    enableScript      = true,   -- master on/off
+    enableFactionChat = true,   -- true = gate alliance/horde lines by faction
+                                -- false = legacy: broadcast everything to everyone
 
-local talk_time         = {1000, 10000}   -- Alliance-driver interval (ms)
-local faction_talk_time = {8000, 20000}   -- Horde-driver interval (ms)
+    talk_time         = {1000, 10000},   -- Alliance-driver interval (ms)
+    faction_talk_time = {8000, 20000},   -- Horde-driver interval (ms)
+    -- ... (see config.lua for the full set)
+}
 ```
 
 ## Core
@@ -27,7 +31,7 @@ local faction_talk_time = {8000, 20000}   -- Horde-driver interval (ms)
 | `roleMoodMatchStrength` | `3.0` | How hard role/mood matching is weighted in line scoring (`1` = off). |
 | `areaMatchStrength` | `3.0` | How hard area matching is weighted in line scoring (`1` = off). |
 
-There is also an `ns` string near the top: an optional `WorldDBQuery` to source extra
+There is also an `ns` string in `config.lua`: an optional `WorldDBQuery` to source extra
 surnames from the world DB (blank = use only `npc_name.lua`).
 
 ## Context-aware chatter flags

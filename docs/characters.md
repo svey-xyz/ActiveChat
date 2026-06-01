@@ -80,14 +80,13 @@ weighted patterns is chosen per character:
 | `{first}` (bare) | 10% | *Maelara* |
 
 Names are de-duplicated against the live roster (bounded retry). You can optionally
-feed additional surnames from the world DB via the `ns` query string near the top of
-`npcTalk.lua`.
+feed additional surnames from the world DB via the `ns` query string in `config.lua`.
 
 ## Roles, personalities, areas
 
-These three identity vocabularies are each defined in **exactly one table** at the top
-of the character-data block in `ActiveChat/npcTalk.lua`. To add or change one, edit only
-that table — no engine changes needed.
+These three identity vocabularies are each defined in **exactly one table** in
+`ActiveChat/data/roster_defs.lua` (required as `rosterDefs`). To add or change one, edit
+only that table — no engine changes needed.
 
 - **`ROLES`** (civic/occupation archetypes). Each entry has name `prefixes`, a
   roster-frequency `weight`, and a default `area` affinity:

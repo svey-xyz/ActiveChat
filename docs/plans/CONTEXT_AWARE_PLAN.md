@@ -33,7 +33,7 @@
 
 > Added after context-aware *line selection* shipped. Two related upgrades to the
 > **token value pools** (the `local foods = {…}` etc. tables and their
-> `selectRandomX` helpers in `npcTalk.lua`). Today line *eligibility* is
+> `selectRandomX` helpers in `data/pools.lua`). Today line *eligibility* is
 > context-aware, but the value a `%token%` resolves to is still a flat uniform random
 > pick. Both parts below change how a token *value* is chosen — they do not
 > touch the scorer.
