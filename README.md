@@ -1,15 +1,14 @@
-# ALE Script: Lively World Chat
+# Azeroth Chatter
 
 Fill **World chat** with ambient, in-world roleplay chatter — the kind of talk you'd
 overhear in a busy capital: citizens, vendors, guards, adventurers, and soldiers swapping
 gossip, lore, jokes, and quiet observations about life in Azeroth. Built for AzerothCore
-(Eluna Lua), it makes **single-player and low-population servers** feel inhabited without
-anyone else online.
+(Eluna Lua).
 
 ## Why it's fun
 
 - **Characters with personality, not random names.** Chatter is voiced by a roster of
-  **recurring residents** — each with a name, faction, role, mood, home city, and a stable
+  **recurring residents** — each with a name, faction, role, personality type, home city, and a stable
   name color — who reappear across a session as familiar voices. → [docs/characters.md](docs/characters.md)
 - **The world reads like Azeroth *right now*.** Night lines fire at night, festival lines
   fire during the actual festival, and season talk tracks real game state — all inside the
@@ -83,10 +82,6 @@ roster cap, match strengths, and the context-aware flags. Full reference:
 | [config.md](docs/config.md) | Every config var, context flags, `homeCityBias`, audience model |
 | [placeholders.md](docs/placeholders.md) | All `%token%` substitutions |
 | [docs/plans/](docs/plans/) | Roadmap and design notes |
-
-> **Guild chat removed.** Earlier versions emitted Guild chat; a guild is a
-> player-organization construct that doesn't fit the civilian/guard/NPC scope, so this
-> module is now **World-chat only.**
 
 ## Contributing
 
