@@ -22,6 +22,12 @@ Tokens substituted at render time by `renderTokens` in `logic/chatter.lua`:
 
 `%activity%` `%bg%` `%boss%` `%city%` `%class%` `%companion%` `%consumable%` `%critter%` `%currency%` `%difficulty%` `%drink%` `%emote%` `%enchant%` `%event%` `%fish%` `%food%` `%gearscore%` `%gem%` `%gold%` `%herb%` `%instance%` `%item%` `%lastevent%` `%level%` `%monster%` `%mount%` `%nextevent%` `%npc%` `%ore%` `%profession%` `%pvptitle%` `%race%` `%rare%` `%rep%` `%role%` `%route%` `%season%` `%shop%` `%spell%` `%tale%` `%timeofday%` `%title%` `%toy%` `%tradegood%` `%weather%` `%zone%` 
 
+`%target%` / `%targetfull%` are **chain-only** (duos/groups): they name another
+cast member (`%target%` a varied short form, `%targetfull%` the full name) and
+fall back to a neutral vocative ('friend', 'traveler', …) when used outside a
+chain, so they never render literally. They may not appear above until chatter
+uses them.
+
 ## Line-tag keys in use
 
 Authoring tags found on entries (parsed by `makeItem`):

@@ -15,7 +15,17 @@ from lupa import LuaRuntime
 HERE = os.path.dirname(os.path.abspath(__file__))      # AzerothChatter/tools
 ROOT = os.path.dirname(HERE)                           # AzerothChatter
 SRC = os.path.join(ROOT, "data", "chatter.lua")
+ENGINE = os.path.join(ROOT, "logic", "chatter.lua")    # holds tokenResolvers
 OUT = os.path.join(ROOT, "meta", "chatter.manifest.md")
+
+# Tokens the engine resolves but that take no chatter authoring to be valid
+# (speaker-derived pronouns, etc.) -- listed so the orphan check below knows they
+# are intentional even if no chatter line happens to use them yet.
+PRONOUN_TOKENS = {"heshe", "himher", "hisher", "manwoman"}
+# Chain-only address tokens: meaningful only in duos/groups, fall back to a vocative
+# elsewhere, and may not be used by any chatter line yet -- whitelisted like pronouns.
+CHAIN_TOKENS = {"target", "targetfull"}
+WHITELIST = PRONOUN_TOKENS | CHAIN_TOKENS
 
 text = open(SRC, encoding="utf-8").read()
 lines_total = text.count("\n") + 1
@@ -36,8 +46,31 @@ def count(tbl):
 # %token% vocabulary + tag-key vocabulary, scanned over the raw source.
 tokens = sorted(set(re.findall(r"%[a-zA-Z]+%", text)))
 tag_keys = sorted(set(re.findall(
-    r"\b(roles|moods|areas|times|seasons|events|eventWindow|"
+    r"\b(roles|moods|genders|areas|times|seasons|events|eventWindow|"
     r"notTimes|notSeasons|notEvents|weight|cooldown|chain)\b\s*=", text)))
+
+# Orphan-token check: cross-reference tokens USED in chatter against the
+# tokenResolvers table in logic/chatter.lua (the source of truth for what the
+# engine can substitute). Keeps both sides honest -- a chatter %token% with no
+# resolver renders literally; a resolver with no use is harmless but flagged.
+engine = open(ENGINE, encoding="utf-8").read()
+resolver_block = re.search(r"tokenResolvers\s*=\s*{(.*?)\n}", engine, re.S)
+resolver_tokens = set()
+if resolver_block:
+    body = resolver_block.group(1)
+    # Strip inline `function(...) ... end` bodies so their local `g =` / comparisons
+    # don't masquerade as resolver keys. Two resolvers are packed per line, so we
+    # then match every remaining `name =` key (not just the line-initial one).
+    body = re.sub(r"function\s*\(.*?\bend\b", "", body, flags=re.S)
+    for m in re.finditer(r"([a-zA-Z]\w*)\s*=(?!=)", body):
+        resolver_tokens.add(m.group(1))
+resolver_tokens |= WHITELIST                            # belt-and-suspenders
+used_tokens = {t.strip("%") for t in tokens}
+unresolved = sorted(used_tokens - resolver_tokens)      # used in chatter, no resolver
+unused = sorted(resolver_tokens - used_tokens - WHITELIST)  # resolver, never used
+if unresolved:
+    print(f"  WARNING: {len(unresolved)} chatter token(s) with no resolver: "
+          + " ".join(f"%{t}%" for t in unresolved), file=sys.stderr)
 
 # Per-pool line ranges: find `<faction> = {` then its `lines/duos/groups = {`.
 ranges = {}
@@ -83,6 +116,11 @@ with open(OUT, "w", encoding="utf-8") as f:
     w("## %token% vocabulary\n\n")
     w("Tokens substituted at render time by `renderTokens` in `logic/chatter.lua`:\n\n")
     w("".join(f"`{t}` " for t in tokens) + "\n\n")
+    w("`%target%` / `%targetfull%` are **chain-only** (duos/groups): they name another\n"
+      "cast member (`%target%` a varied short form, `%targetfull%` the full name) and\n"
+      "fall back to a neutral vocative ('friend', 'traveler', …) when used outside a\n"
+      "chain, so they never render literally. They may not appear above until chatter\n"
+      "uses them.\n\n")
 
     w("## Line-tag keys in use\n\n")
     w("Authoring tags found on entries (parsed by `makeItem`):\n\n")
@@ -96,3 +134,5 @@ with open(OUT, "w", encoding="utf-8") as f:
 print(f"Wrote {OUT}")
 print(f"  {grand} entries | lines={totals['lines']} duos={totals['duos']} "
       f"groups={totals['groups']} | {len(tokens)} tokens")
+print(f"  resolvers={len(resolver_tokens)} | unresolved={len(unresolved)} "
+      f"| unused={len(unused)}")

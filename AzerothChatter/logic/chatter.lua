@@ -173,7 +173,7 @@ local function makeItem(kind, entry, forceChain)
     if (type(entry) == "string") then
         return {
             kind = kind, data = entry,
-            roles = nil, moods = nil,
+            roles = nil, moods = nil, genders = nil,
             areaGlobal = true, areas = {},
             timesGlobal = true, times = {},
             seasonsGlobal = true, seasons = {},
@@ -200,7 +200,7 @@ local function makeItem(kind, entry, forceChain)
     local eventsGlobal, eventsList = normalizeEvents(entry.events)
     return {
         kind = kind, data = data,
-        roles = entry.roles, moods = entry.moods,
+        roles = entry.roles, moods = entry.moods, genders = entry.genders,
         areaGlobal = areaGlobal, areas = areaMap,
         timesGlobal = timesGlobal, times = timesMap,
         seasonsGlobal = seasonsGlobal, seasons = seasonsMap,
@@ -747,8 +747,11 @@ local function scoreLine(item, char, tick)
     local base = item.weight or 1
     local rf   = matchFactor(item.roles, char.role)
     local mf   = matchFactor(item.moods, char.personality)
+    -- genderFactor: same boost/floor as role/mood. A gendered line is never required
+    -- (untagged => 1.0, mismatch => low floor, never 0) so no character goes silent.
+    local gf   = matchFactor(item.genders, char.gender)
     local rp   = recencyPenalty(item, tick)
-    return base * rf * mf * af * tf * sf * ef * xf * rp
+    return base * rf * mf * gf * af * tf * sf * ef * xf * rp
 end
 
 -- pickLine -> item | nil. Scores every candidate, weighted-random picks among
@@ -900,9 +903,39 @@ local function cityFor(speaker)
     return pools.selectRandomCity()
 end
 
+-- Resolve the character `speaker` is addressing in a chain, for %target%/%targetfull%.
+--   duo:   the OTHER cast member (B addresses A and vice-versa).
+--   group: the previous speaker's character (so the line reads as a reply); on the
+--          first line (no prevName) fall back to a random other cast member.
+--   line:  no target (nil) -> the target tokens fall back to a vocative.
+-- Returns a full character (needs nameParts + gender), looked up in `cast` by name.
+local function targetForLine(cast, kind, speaker, prevName)
+    if (type(cast) ~= "table") or (#cast < 2) then return nil end
+    if (kind == "duo") then
+        return (cast[1].name == speaker.name) and cast[2] or cast[1]
+    end
+    -- group: prefer the prior speaker; fall back to any other member.
+    local target
+    if (prevName) and (prevName ~= speaker.name) then
+        for _, c in ipairs(cast) do
+            if (c.name == prevName) then target = c; break end
+        end
+    end
+    if (not target) then
+        local guard = 0
+        repeat
+            target = cast[math.random(#cast)]
+            guard = guard + 1
+        until (target.name ~= speaker.name) or (guard >= 12)
+        if (target.name == speaker.name) then return nil end
+    end
+    return target
+end
+
 -- Begin or continue the conversation on `channel`. Returns rawText, speaker,
 -- audience, item (item lets the renderer honour the line's `events` tag for
--- %event%). Advances the per-channel state and global tick.
+-- %event%), target (addressed cast member for %target%, or nil). Advances the
+-- per-channel state and global tick.
 local function nextLine(channel, candidates, initiator, castFaction)
     local st = t.conv[channel]
     if (not st) then st = {}; t.conv[channel] = st end
@@ -912,11 +945,13 @@ local function nextLine(channel, candidates, initiator, castFaction)
         local item = st.item
         local ti   = st.ti
         local speaker = speakerForLine(st.cast, item.kind, ti, st.prevName)
+        -- Resolve target BEFORE overwriting prevName (group target = prior speaker).
+        local target = targetForLine(st.cast, item.kind, speaker, st.prevName)
         st.ti       = ti + 1
         st.prevName = speaker.name
         st.speaker  = speaker
         if (st.ti > #item.data) then st.item = nil end       -- chain finished
-        return item.data[ti], speaker, st.audience, item
+        return item.data[ti], speaker, st.audience, item, target
     end
 
     -- Start a fresh item for this speaker.
@@ -931,7 +966,7 @@ local function nextLine(channel, candidates, initiator, castFaction)
         st.audience = item.audience
         st.speaker  = initiator
         st.prevName = initiator.name
-        return item.data, initiator, item.audience, item
+        return item.data, initiator, item.audience, item     -- no target for a single line
     end
 
     -- Duo/group: fix the cast now and emit its first line.
@@ -939,11 +974,12 @@ local function nextLine(channel, candidates, initiator, castFaction)
     st.cast     = cast
     st.audience = item.audience
     local speaker = speakerForLine(cast, item.kind, 1, nil)
+    local target  = targetForLine(cast, item.kind, speaker, nil)  -- first line: random other
     st.prevName = speaker.name
     st.speaker  = speaker
     st.ti       = 2
     st.item     = (#item.data > 1) and item or nil           -- chain or one-line
-    return item.data[1], speaker, item.audience, item
+    return item.data[1], speaker, item.audience, item, target
 end
 
 -- Event-activation burst -- OPTIONAL, disabled by default (config.enableEventBurst =
@@ -1004,12 +1040,39 @@ end
 -- enableEventBurst) when an event flips active. Default-off: dead unless enabled.
 context.setEventBurstHook(fireEventBurst)
 
+-- Neutral vocatives for %target%/%targetfull% when there is no addressed character
+-- (a single `line`, or a mis-tagged chain) so the token never renders literally.
+local targetVocatives = { "friend", "traveler", "stranger", "neighbor", "comrade" }
+
+-- Weighted short-form address over the parts that exist on `c.nameParts`. Lets a
+-- "Captain Cedric" be addressed as "Captain", "Cedric", or his full name so replies
+-- feel natural. Weights: prefix 30 / first 45 / prefix+first 15 / full 10; when there
+-- is no prefix, its weight folds into "first alone". No target -> a random vocative.
+local function addressName(c)
+    if (type(c) ~= "table") then
+        return targetVocatives[math.random(#targetVocatives)]
+    end
+    local np    = c.nameParts or {}
+    local first = np.first or c.name
+    local hasPrefix = (type(np.prefix) == "string") and (np.prefix ~= "")
+    local r = math.random(100)
+    if (hasPrefix) then
+        if (r <= 30) then return np.prefix end                       -- prefix alone
+        if (r <= 75) then return first end                           -- first alone (45%)
+        if (r <= 90) then return np.prefix .. " " .. first end       -- prefix + first (15%)
+        return c.name                                                -- full name (10%)
+    end
+    -- No prefix: the 30% prefix weight folds into "first alone" -> first 75%, full 25%.
+    if (r <= 90) then return first end
+    return c.name
+end
+
 -- Token -> resolver dispatch. One entry per %token%; the value is called as
--- f(speaker, ctx, item) and returns the substitution. Pool tokens ignore the args
--- (Lua drops extras); context/speaker-aware tokens use them. To add a token: add
--- one line here and use it in chatter -- no gsub plumbing. An unmapped %token% is
--- left intact (so orphans are visible, never crash). Replaces the old wall of ~50
--- sequential gsub calls; order no longer matters (each token keyed by name).
+-- f(speaker, ctx, item, target) and returns the substitution. Pool tokens ignore the
+-- args (Lua drops extras); context/speaker-/target-aware tokens use them. To add a
+-- token: add one line here and use it in chatter -- no gsub plumbing. An unmapped
+-- %token% is left intact (so orphans are visible, never crash). Replaces the old wall
+-- of ~50 sequential gsub calls; order no longer matters (each token keyed by name).
 local tokenResolvers = {
     zone       = pools.selectRandomZone,        instance   = pools.selectRandomInstance,
     role       = pools.selectRandomRole,        class      = pools.selectRandomClass,
@@ -1031,6 +1094,14 @@ local tokenResolvers = {
     level      = pools.selectRandomLevel,        gearscore  = pools.selectRandomGearscore,
     shop       = pools.selectRandomShop,         route      = pools.selectRandomRoute,
     tale       = pools.selectRandomTale,         weather    = pools.selectRandomWeather,
+    -- Speaker pronouns, resolved from speaker.gender (default neutral when unset).
+    heshe     = function(speaker)       local g = speaker and speaker.gender; return g == "male" and "he"  or g == "female" and "she"   or "they"  end,
+    himher    = function(speaker)       local g = speaker and speaker.gender; return g == "male" and "him" or g == "female" and "her"   or "them"  end,
+    hisher    = function(speaker)       local g = speaker and speaker.gender; return g == "male" and "his" or g == "female" and "her"   or "their" end,
+    manwoman  = function(speaker)       local g = speaker and speaker.gender; return g == "male" and "man" or g == "female" and "woman" or "one"   end,
+    -- Target address (chain-only; falls back to a vocative when no target is set).
+    target     = function(_, _, _, target) return target and addressName(target) or targetVocatives[math.random(#targetVocatives)] end,
+    targetfull = function(_, _, _, target) return (target and target.name) or targetVocatives[math.random(#targetVocatives)] end,
     -- Speaker-/context-aware (use the extra args):
     city      = function(speaker)       return cityFor(speaker) end,
     event     = function(_, ctx, item)  return resolveEvent(item, ctx) end,
@@ -1040,15 +1111,16 @@ local tokenResolvers = {
     timeofday = function(_, ctx)        return resolveTimeOfDay(ctx) end,
 }
 
--- Run the full %token% substitution on `txt` in ONE pass. `ctx`/`item` are optional;
--- when absent (or context off) the context-aware tokens fall back to random helpers.
--- `item` lets %event% honour the line's `events` tag (see resolveEvent). An unknown
--- %token% is returned untouched (the gsub callback returns nil to keep the match).
-local function renderTokens(txt, speaker, ctx, item)
+-- Run the full %token% substitution on `txt` in ONE pass. `ctx`/`item`/`target` are
+-- optional; when absent (or context off) the context-aware tokens fall back to random
+-- helpers and the target tokens fall back to a vocative. `item` lets %event% honour the
+-- line's `events` tag (see resolveEvent); `target` is the addressed cast member in a
+-- chain. An unknown %token% is returned untouched (the gsub callback returns nil).
+local function renderTokens(txt, speaker, ctx, item, target)
     return (string.gsub(txt, "%%(%w+)%%", function(tok)
         local f = tokenResolvers[tok]
         if (not f) then return nil end                       -- unmapped: leave %tok% intact
-        local v = f(speaker, ctx, item)
+        local v = f(speaker, ctx, item, target)
         if (v == nil) then return nil end
         return tostring(v)
     end))
@@ -1091,9 +1163,9 @@ local function speak(channel, candidates, castFaction)
     refreshCtx()                                             -- cheap (TTL-guarded); keeps ctx fresh
     local initiator = resolveSpeaker(castFaction)
     if (not initiator) then return end                       -- no character available
-    local raw, speaker, audience, item = nextLine(channel, candidates, initiator, castFaction)
+    local raw, speaker, audience, item, target = nextLine(channel, candidates, initiator, castFaction)
     if (not raw) then return end
-    local body = renderTokens(raw, speaker, ctx, item)
+    local body = renderTokens(raw, speaker, ctx, item, target)
     recordTopic(raw)                                         -- FORWARD-COMPAT no-op (chat-topic awareness)
     emit(audience, formatWorld(speaker, body))
 end

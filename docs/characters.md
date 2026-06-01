@@ -21,6 +21,7 @@ Each generated character is a small Lua table:
 | Field | Meaning |
 |---|---|
 | `name` | Display name (see [Name generation](#name-generation)) |
+| `gender` | `"male"`, `"female"`, or `"neutral"` — drives an agreeing name + pronouns |
 | `faction` | `"alliance"` or `"horde"` — intrinsic, never changes |
 | `role` | Civic/occupation archetype, one of `ROLES` (e.g. `guard`, `vendor`) |
 | `personality` | Mood descriptor, one of `PERSONALITIES` (e.g. `gruff`, `warm`) |
@@ -67,10 +68,10 @@ generation:
 
 ## Name generation
 
-Names are built from `AzerothChatter/data/names.lua`
-(`{ alliance = <first names>, horde = <first names>, surnames = <list> }`) plus the
-role prefixes and personality epithets in `ROLES` / `PERSONALITIES`. One of four
-weighted patterns is chosen per character:
+A character's **gender** is rolled first (config `genderRatio`), and the name is built to
+agree with it. Names come from `AzerothChatter/data/names.lua` (first-name pools bucketed
+by gender) plus the gender-bucketed role prefixes and the personality epithets in `ROLES`
+/ `PERSONALITIES`. One of four weighted patterns is chosen per character:
 
 | Pattern | ~Weight | Example |
 |---|---|---|
@@ -79,8 +80,49 @@ weighted patterns is chosen per character:
 | `{first}, {epithet}` | 15% | *Actal, the Brave* |
 | `{first}` (bare) | 10% | *Maelara* |
 
+Because the first name and the role prefix are both drawn from the character's gender, the
+prefix always agrees with the name — no more *"Sister Cedric"* or *"Lady Thorgrim"*. The
+chosen pieces are kept as structured `nameParts` (`prefix` / `first` / `surname` /
+`epithet`) so a conversation can address a character by a natural short form (see
+[Addressing other speakers](#addressing-other-speakers)). Legacy flat name/prefix lists
+still load and are treated as neutral.
+
 Names are de-duplicated against the live roster (bounded retry). You can optionally
 feed additional surnames from the world DB via the `ns` query string in `AzerothChatter.lua`.
+
+## Gender-aware lines & pronouns
+
+A character's `gender` lets lines fit the speaker and lets pronouns resolve correctly.
+
+- **`genders` line tag.** A line may carry `genders = {"female"}` (or `{"male"}`) to
+  prefer a matching speaker — scored like the `roles`/`moods` tags: a boost on match, a
+  low floor (never an exclude) on mismatch, neutral when untagged. So a gendered line is
+  a *preference*, never a requirement — no character is ever left without lines. Use it
+  sparingly; most ambience is gender-neutral.
+- **Pronoun tokens** resolve from the **speaker's** gender (neutral default):
+
+  | Token | male | female | neutral |
+  |---|---|---|---|
+  | `%heshe%`   | he  | she   | they  |
+  | `%himher%`  | him | her   | them  |
+  | `%hisher%`  | his | her   | their |
+  | `%manwoman%`| man | woman | one   |
+
+  Pronouns are speaker-only (not target-aware), and have no capitalized variants — phrase
+  lines so the pronoun isn't sentence-initial.
+
+## Addressing other speakers
+
+Inside a **duo** or **group**, a line can name another cast member with `%target%`
+(*"Well said, Captain."*) or `%targetfull%` for the full name. The engine resolves the
+addressed character — in a duo the other speaker, in a group the speaker who just spoke
+(a random other on the first line) — and `%target%` renders a **varied short form** of
+their name (the prefix alone, the first name, prefix + first, or the full name) so
+address feels natural rather than repetitive.
+
+These two tokens are **chain-only**: in a single-speaker line there is no one to address,
+so they fall back to a neutral vocative (*"friend"*, *"traveler"*, …) and never render a
+literal `%target%`.
 
 ## Roles, personalities, areas
 

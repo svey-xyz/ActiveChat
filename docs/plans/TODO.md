@@ -11,9 +11,9 @@ detail.
 |---|---|---|
 | Context tags on placeholder tokens (food → eggs in the morning, not meat pie) | [CONTEXT_AWARE_PLAN.md](./CONTEXT_AWARE_PLAN.md) | Phase 8 Part A |
 | Leading-`a` grammar inconsistency across critter/companion/drink tokens | [CONTEXT_AWARE_PLAN.md](./CONTEXT_AWARE_PLAN.md) | Phase 8 Part B |
-| Gendered tags | [CHARACTERS_PLAN.md](./CHARACTERS_PLAN.md) | Phase 1 Part A + B |
-| Tokenized names/roles ("Sister Cedric" should be gender-correct) | [CHARACTERS_PLAN.md](./CHARACTERS_PLAN.md) | Phase 1 Part A |
-| `%target%` — address another speaker by (short) name | [CHARACTERS_PLAN.md](./CHARACTERS_PLAN.md) | Phase 1 Part C |
+| Gendered tags — ✅ DONE | [CHARACTERS_PLAN.md](./CHARACTERS_PLAN.md) | shipped (condensed) |
+| Tokenized names/roles ("Sister Cedric" should be gender-correct) — ✅ DONE | [CHARACTERS_PLAN.md](./CHARACTERS_PLAN.md) | shipped (condensed) |
+| `%target%` — address another speaker by (short) name — ✅ DONE | [CHARACTERS_PLAN.md](./CHARACTERS_PLAN.md) | shipped (condensed) |
 | Weighted traits (more farmers than nobles, kindly > cowardly) + correlations (Ironforge → gruff smith) — ✅ DONE | [WEIGHTED_TRAITS_PLAN.md](./WEIGHTED_TRAITS_PLAN.md) | shipped (condensed) |
 | Zone-specific chatter + proximity + per-area timers (drop alliance/horde/shared timers) | [ZONE_AWARE_PLAN.md](./ZONE_AWARE_PLAN.md) | whole doc |
 | Multi-line conversations on their own faster timer/knob | [CONVERSATION_PACING_PLAN.md](./CONVERSATION_PACING_PLAN.md) | whole doc |
@@ -23,8 +23,8 @@ detail.
 
 ```
 A. Structured names + gender  ─┬─> B. Gendered line tags + pronoun tokens
-   (CHARACTERS Phase 1 Part A) │       (CHARACTERS Phase 1 Part B)
-   [DONE]                      ├─> C. %target% address token (CHARACTERS Phase 1 Part C)
+   (CHARACTERS Phase 1 Part A) │       (CHARACTERS Phase 1 Part B) [DONE]
+   [DONE]                      ├─> C. %target% address token (CHARACTERS Phase 1 Part C) [DONE]
                                ├─> Player commands "create" (PLAYER_COMMANDS_PLAN)
                                └─> W. Weighted/correlated traits (WEIGHTED_TRAITS_PLAN) [DONE]
                                       read gender + homeCity; reordered generateCharacter
@@ -52,8 +52,10 @@ player-command *creation* now build on the reordered, weighted generator.
    condensed [WEIGHTED_TRAITS_PLAN.md](./WEIGHTED_TRAITS_PLAN.md).
 3. **E then D — token pool reshape** (article rule first, then context tags). One pass
    over the token pools; independent of everything else.
-4. **B — gendered tags + pronoun tokens** (needs A).
-5. **C — `%target%`** (needs A; touches conversation cast plumbing).
+4. **B — gendered tags + pronoun tokens** (needs A) — ✅ DONE. `genders` line tag +
+   `%heshe%`/`%himher%`/`%hisher%`/`%manwoman%` speaker pronouns.
+5. **C — `%target%`** (needs A; touches conversation cast plumbing) — ✅ DONE.
+   `%target%`/`%targetfull%` address the other speaker; chain-only, vocative fallback.
 6. **Conversation pacing** (small, self-contained; nice quality win; sequence before
    zone work so zone delivery can build on the pacing/conversation-state changes).
 7. **Player commands** — inspect first (read-only), then create (needs A).

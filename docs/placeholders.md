@@ -56,6 +56,23 @@ value both times — the pick is made once per line.)
 > clock (`22:00`), "server time", or a printed date. The time/season come from a
 > *mapping* over the in-game game-time, not a displayed value.
 
+## Speaker & address tokens
+
+These resolve from the **characters in the conversation**, not a random pool. See
+[characters.md](characters.md#gender-aware-lines--pronouns).
+
+| Token | Replaced with |
+|---|---|
+| `%heshe%` | the **speaker's** pronoun — *he* / *she* / *they* (neutral default) |
+| `%himher%` | the speaker's pronoun — *him* / *her* / *them* |
+| `%hisher%` | the speaker's pronoun — *his* / *her* / *their* |
+| `%manwoman%` | the speaker's noun — *man* / *woman* / *one* |
+| `%target%` | the addressed cast member, **short form** (prefix, first name, or full). **Chain-only** — meaningful inside `duos`/`groups`; falls back to a vocative (*friend*, *traveler*) in a single line. |
+| `%targetfull%` | the addressed cast member's **full** name. **Chain-only**, same vocative fallback as `%target%`. |
+
+> Pronoun tokens are **speaker-only** (not target-aware) and have no capitalized
+> variants — phrase lines so the pronoun isn't sentence-initial.
+
 ## Player-imitation tokens (use sparingly)
 
 These exist for the occasional adventurer voice, but the chatter is meant to be
