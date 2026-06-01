@@ -15,7 +15,7 @@ value both times — the pick is made once per line.)
 | `%city%` | a capital or neutral hub (biased to the speaker's home city when `homeCityBias`) |
 | `%race%` | a playable race (e.g. *Blood Elf*) |
 | `%monster%` | a hostile native creature (e.g. *murloc*, *owlbeast*) |
-| `%critter%` | a passive critter (e.g. *deer*, *rabbit*) |
+| `%critter%` | a passive critter, **bare noun** (e.g. *deer*, *rabbit*). **Context-aware** (light seasonal bias). Use `%acritter%` for "a/an". |
 | `%boss%` | a notable boss (e.g. *The Lich King*, *Ragnaros*) |
 | `%consumable%` | a flask, potion, or food buff (e.g. *Fish Feast*) |
 | `%item%` | a famous epic/legendary (e.g. *Shadowmourne*) |
@@ -35,26 +35,61 @@ value both times — the pick is made once per line.)
 | `%shop%` | a named tavern, inn, or shop (e.g. *the Pig and Whistle Tavern*) |
 | `%route%` | a travel route or method (e.g. *the Deeprun Tram*) |
 | `%tale%` | a famous legend or story (e.g. *the Culling of Stratholme*) |
-| `%weather%` | a weather condition (e.g. *a blizzard*, *clear skies*) |
+| `%weather%` | a weather condition (e.g. *a blizzard*, *clear skies*). **Context-aware** — biased toward the current season; used bare/descriptive so its baked article stays. |
 | `%herb%` | a gatherable herb (e.g. *Frost Lotus*, *Goldclover*) |
 | `%ore%` | an ore or smeltable metal (e.g. *Saronite*, *Truesilver*) |
 | `%gem%` | a cut or raw gem (e.g. *Cardinal Ruby*) |
 | `%fish%` | a catchable fish (e.g. *Dragonfin Angelfish*) |
 | `%npc%` | a famous lore figure (e.g. *Thrall*, *Jaina Proudmoore*) |
 | `%currency%` | an earned currency/badge (e.g. *Emblem of Frost*) |
-| `%food%` | a tavern food (e.g. *a Dalaran Brownie*) |
-| `%drink%` | a tavern drink (e.g. *Thunder Ale*) |
+| `%food%` | a tavern food, **bare noun** (e.g. *meat pie*, *Honey Bread*). **Context-aware** (morning/seasonal/event bias). Use `%afood%` for "a/an". |
+| `%drink%` | a tavern drink, **bare noun** (e.g. *Thunder Ale*). **Context-aware**. Use `%adrink%` for "a/an". |
 | `%title%` | a non-PvP/PvE title (e.g. *the Loremaster*, *Chef*) |
 | `%tradegood%` | a crafting material (e.g. *Frostweave Cloth*, *Eternal Fire*) |
-| `%companion%` | a vanity companion pet (e.g. *an Onyxian Whelpling*) |
+| `%companion%` | a vanity companion pet, **bare noun** (e.g. *Onyxian Whelpling*) or a proper name (*Pengu*). Use `%acompanion%` for "a/an". |
 | `%enchant%` | a gear enchantment (e.g. *Mongoose*, *Crusader*) |
-| `%toy%` | a novelty/fun item (e.g. *a Noggenfogger Elixir*) |
+| `%toy%` | a novelty/fun item, **bare noun** (e.g. *Noggenfogger Elixir*). Use `%atoy%` for "a/an". |
 
 > **In-character rule for the context tokens.** `%timeofday%`, `%season%`, `%event%`,
 > `%nextevent%`, and `%lastevent%` always resolve to **fiction words only** — a
 > time-of-day phrase, a season name, or a holiday name. They **never** surface a real
 > clock (`22:00`), "server time", or a printed date. The time/season come from a
 > *mapping* over the in-game game-time, not a displayed value.
+
+## Articles & the `%a…%` tokens
+
+Countable-noun pools (`%food%`, `%drink%`, `%companion%`, `%toy%`, `%critter%`) store
+their values **as bare noun phrases with no leading article** — *meat pie*, not *a meat
+pie*. The sentence decides the article, because English article choice is
+context-dependent (*some bread* vs *a pie* vs *the ale*). So **author the article
+yourself**, one of two ways:
+
+- **`%afood%` / `%adrink%` / `%acompanion%` / `%atoy%` / `%acritter%`** — combined
+  tokens that pick a value and prepend the correct **vowel-aware** *a*/*an* in one step:
+  *a meat pie*, *an apple*, *an Onyxian Whelpling*. Prefer these for the indefinite
+  case — they can't get *a/an* wrong, and they never prefix a **proper name** (so
+  `%acompanion%` yields *Pengu*, never *a Pengu*).
+- **`some %food%` / `the %drink%` / `my %companion%`** — when a different article (or
+  none) fits, just write it before the bare token.
+
+Do **not** write `a %food%` — that risks *a apple* (wrong) or, with a value that still
+carried an article, *a a meat pie* (double). Use `%afood%` instead. `tools/pass1_render_check.py`
+samples every `%a…%` token and fails on double-articles, *a/an* mismatches, or an
+article stuck on a proper name.
+
+## Context-aware token values
+
+A handful of pools where context clearly matters — `%food%`, `%drink%`, `%weather%`,
+`%activity%`, `%critter%` — bias their pick toward what fits *right now*, using the same
+`ctx` and the same `times`/`seasons`/`events` vocabulary as context-aware **line**
+selection (see [context.md](context.md)). *porridge* is likelier in the morning,
+*mulled wine* in winter, *Pilgrim's pie* only during Pilgrim's Bounty. Off-context
+values are hard-excluded the same way an off-context line is; untagged values fit
+anywhere. **With context off or unavailable, every value scores equally — exactly
+today's uniform random pick** (the fallback invariant). Abstract pools (`%item%`,
+`%boss%`, `%spell%`, `%gem%`, …) stay untagged — tag only where the value implies a
+context. Token-pool tags live in `data/tokens.lua`; the scoring reuses the engine's
+`timeFactor`/`seasonFactor`/`eventFactor` via `selectTagged`.
 
 ## Speaker & address tokens
 

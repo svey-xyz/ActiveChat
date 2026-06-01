@@ -174,6 +174,39 @@ Two config knobs in `AzerothChatter.lua` govern the correlation layer:
 Home city is still a **flat draw** — locale shapes *who* a resident is, not *how often*
 each capital appears.
 
+## Spawning & inspecting characters in-game (`.ac` commands)
+
+A small **out-of-character** command surface lets a player create roster characters and
+inspect existing ones. It is debugging/worldbuilding tooling, **not** chatter — every
+reply goes **privately** to the requesting player (`SendBroadcastMessage`), never into
+World chat. Gated by `enablePlayerCommands` (see [config.md](config.md)).
+
+| Command | What it does |
+|---|---|
+| `.ac create` | Opens a stepwise **gossip trait-picker** (Faction → Role → Personality → Gender → Area → Confirm). The confirm step shows the rolled name with a re-roll button. |
+| `.ac create k=v [k=v …]` | Arg form, e.g. `.ac create faction=horde role=guard mood=gruff gender=male area=city name="Old Borin"`. Keys: `faction`, `role`, `mood` (alias of personality), `gender`, `area`, `name`. Any omitted trait is **rolled** (with the normal weighting/correlation). |
+| `.ac who <name>` | Prints a named character's traits (case-insensitive exact, then prefix; ambiguous prefixes list candidates). |
+| `.ac list [faction]` | Lists the current roster, one line per character (capped at 40 + a `+N more` count), optionally filtered to `alliance`/`horde`. |
+| `.ac help` | Usage. |
+
+**Pickable traits.** The picker enumerates the live vocabularies — `ROLES`, `PERSONALITIES`,
+`AREAS` (see above) plus `faction` (alliance/horde) and `gender` (male/female/neutral) — by
+reading the same tables the engine uses, so adding a role/mood/area surfaces it in the menu
+and arg-form validation automatically. **Custom names** are arg-form only (`name="…"`); the
+gossip picker uses a rolled, gender-correct name with a re-roll button (free-text entry from
+gossip is awkward). A supplied name that collides with the live roster is **auto-suffixed**
+(`Old Borin`, `Old Borin 2`, …) rather than rejected.
+
+**Ephemeral by design.** A player-created character is a normal roster member — it joins the
+in-memory roster, can speak immediately, counts against `maxCharacters`, and **vanishes on
+restart** like every ambient character. Nothing is persisted. `.ac help` states this so
+players aren't surprised.
+
+**Limits.** Creation respects three guards: `playerCreateGmOnly` (restrict creation to GMs),
+`playerCreateLimit` (max characters one player may spawn per **login session**; reset on
+logout), and the shared `maxCharacters` roster cap (creation refuses cleanly when the roster
+is full). See [config.md → Player commands](config.md#player-commands).
+
 ### Future hook: zone-specific chatter
 
 In v1 a character's `area` is a **static affinity** assigned once at generation. The

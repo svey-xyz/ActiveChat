@@ -9,15 +9,15 @@ detail.
 
 | Idea (from the brain-dump) | Plan | Section |
 |---|---|---|
-| Context tags on placeholder tokens (food → eggs in the morning, not meat pie) | [CONTEXT_AWARE_PLAN.md](./CONTEXT_AWARE_PLAN.md) | Phase 8 Part A |
-| Leading-`a` grammar inconsistency across critter/companion/drink tokens | [CONTEXT_AWARE_PLAN.md](./CONTEXT_AWARE_PLAN.md) | Phase 8 Part B |
+| Context tags on placeholder tokens (food → eggs in the morning, not meat pie) — ✅ DONE | [CONTEXT_AWARE_PLAN.md](./CONTEXT_AWARE_PLAN.md) | Phase 8 Part A (condensed) |
+| Leading-`a` grammar inconsistency across critter/companion/drink tokens — ✅ DONE | [CONTEXT_AWARE_PLAN.md](./CONTEXT_AWARE_PLAN.md) | Phase 8 Part B (condensed) |
 | Gendered tags — ✅ DONE | [CHARACTERS_PLAN.md](./CHARACTERS_PLAN.md) | shipped (condensed) |
 | Tokenized names/roles ("Sister Cedric" should be gender-correct) — ✅ DONE | [CHARACTERS_PLAN.md](./CHARACTERS_PLAN.md) | shipped (condensed) |
 | `%target%` — address another speaker by (short) name — ✅ DONE | [CHARACTERS_PLAN.md](./CHARACTERS_PLAN.md) | shipped (condensed) |
 | Weighted traits (more farmers than nobles, kindly > cowardly) + correlations (Ironforge → gruff smith) — ✅ DONE | [WEIGHTED_TRAITS_PLAN.md](./WEIGHTED_TRAITS_PLAN.md) | shipped (condensed) |
 | Zone-specific chatter + proximity + per-area timers (drop alliance/horde/shared timers) | [ZONE_AWARE_PLAN.md](./ZONE_AWARE_PLAN.md) | whole doc |
-| Multi-line conversations on their own faster timer/knob | [CONVERSATION_PACING_PLAN.md](./CONVERSATION_PACING_PLAN.md) | whole doc |
-| In-game `.` commands: create a character (pick traits) / inspect a character's traits | [PLAYER_COMMANDS_PLAN.md](./PLAYER_COMMANDS_PLAN.md) | whole doc |
+| Multi-line conversations on their own faster timer/knob — ✅ DONE | [CONVERSATION_PACING_PLAN.md](./CONVERSATION_PACING_PLAN.md) | shipped (condensed) |
+| In-game `.` commands: create a character (pick traits) / inspect a character's traits — ✅ DONE | [PLAYER_COMMANDS_PLAN.md](./PLAYER_COMMANDS_PLAN.md) | shipped (condensed) |
 
 ## Dependency graph
 
@@ -50,17 +50,30 @@ player-command *creation* now build on the reordered, weighted generator.
    kindly > cowardly, Ironforge → gruff smith). Reordered `generateCharacter` (gender +
    home city roll before role/mood), so B/C and command *creation* build on it. See the
    condensed [WEIGHTED_TRAITS_PLAN.md](./WEIGHTED_TRAITS_PLAN.md).
-3. **E then D — token pool reshape** (article rule first, then context tags). One pass
-   over the token pools; independent of everything else.
+3. **E then D — token pool reshape** — ✅ DONE (2026-06-01). Article rule first, then
+   context tags, one pass over the token pools. Added `%afood%`/`%adrink%`/`%acompanion%`/
+   `%atoy%`/`%acritter%` (vowel-aware combined tokens); `selectTagged(pool, ctx)` weighted
+   selector reusing the line factor helpers. See the condensed
+   [CONTEXT_AWARE_PLAN.md](./CONTEXT_AWARE_PLAN.md) Phase 8.
 4. **B — gendered tags + pronoun tokens** (needs A) — ✅ DONE. `genders` line tag +
    `%heshe%`/`%himher%`/`%hisher%`/`%manwoman%` speaker pronouns.
 5. **C — `%target%`** (needs A; touches conversation cast plumbing) — ✅ DONE.
    `%target%`/`%targetfull%` address the other speaker; chain-only, vocative fallback.
-6. **Conversation pacing** (small, self-contained; nice quality win; sequence before
-   zone work so zone delivery can build on the pacing/conversation-state changes).
-7. **Player commands** — inspect first (read-only), then create (needs A).
-8. **Zone-aware chatter** (largest; reworks delivery + timers). Land last and
-   reconcile conversation state with per-zone delivery groups.
+6. **Conversation pacing** — ✅ DONE (2026-06-01). `enableBurstConversations` +
+   `convLineGap`/`convMaxLines`; `runChainBurst` self-rescheduling one-shot timer runs a
+   started chain at its own pacing, decoupled from ambient cadence (`st.bursting` guard
+   prevents double-emission). Zone delivery must later key `t.conv` by zone bucket (compact
+   ZONE NOTE left in `runChainBurst`). See the condensed
+   [CONVERSATION_PACING_PLAN.md](./CONVERSATION_PACING_PLAN.md).
+7. **Player commands** — ✅ DONE (2026-06-01). `.ac who`/`list`/`help` (inspect) +
+   `.ac create` (arg form and gossip trait-picker); `createCharacter(opts)` factory that
+   `generateCharacter` now delegates to. Behind `enablePlayerCommands`/`playerCreateGmOnly`/
+   `playerCreateLimit`; ephemeral, player creations share `maxCharacters`. See the condensed
+   [PLAYER_COMMANDS_PLAN.md](./PLAYER_COMMANDS_PLAN.md).
+8. **Zone-aware chatter** (largest; reworks delivery + timers). **Next / only remaining
+   track.** Land last and reconcile conversation state with per-zone delivery groups —
+   note the `ZONE NOTE` left in `runChainBurst` (conversation pacing) about keying
+   `t.conv` by zone bucket.
 
 ## Cross-cutting invariants to preserve (every plan)
 

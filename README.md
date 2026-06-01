@@ -17,11 +17,17 @@ gossip, lore, jokes, and quiet observations about life in Azeroth. Built for Aze
   `%city%`, and more swap in random, lore-appropriate values so no line reads the same
   way twice. → [docs/placeholders.md](docs/placeholders.md)
 - **Three conversation shapes** — standalone one-liners, two-person back-and-forth, and
-  multi-voice group discussions.
+  multi-voice group discussions. Once a multi-line exchange starts, its lines flow on a
+  short burst timer (`convLineGap`) so it reads as one real-time conversation, independent
+  of how often the world chats (`talk_time`). → [docs/config.md](docs/config.md)
 - **Faction-aware** — lines go to everyone (`shared`) or one faction (`alliance` /
   `horde`), each with its own capital-city flavour.
 - **Easy to extend** — all content lives in plain Lua tables; add lines without touching
   the engine. → [docs/authoring.md](docs/authoring.md)
+- **Spawn & inspect characters in-game** — `.ac create` (a gossip trait-picker or
+  `k=v` args), `.ac who <name>`, and `.ac list` let you populate and explore the roster
+  live; replies are private to you, and created characters are ephemeral.
+  → [docs/characters.md](docs/characters.md#spawning--inspecting-characters-in-game-ac-commands)
 
 It's **deliberately not an imitation of real players**: no gearscore spam, no auction
 adverts, no out-of-character meta. Every line stays inside the fiction — Azeroth is real

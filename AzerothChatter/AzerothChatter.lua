@@ -15,9 +15,19 @@ return {
     enableFactionChat = true,   -- true = gate alliance/horde lines by faction
                                 -- false = legacy: broadcast everything to everyone
 
-    -- Spam intervals (ms). 1 second = 1000.
+    -- Spam intervals (ms). 1 second = 1000. These set AMBIENT FREQUENCY only --
+    -- how often a NEW conversation starts. Within-conversation pacing is the
+    -- separate convLineGap knob below; the two are intentionally orthogonal.
     talk_time         = {8000, 120000},   -- shared WORLD chat
     faction_talk_time = {20000, 180000},   -- faction WORLD chat (per faction)
+
+    -- Conversation pacing. Once a duo/group starts, its remaining lines run on a
+    -- dedicated short-interval burst timer (decoupled from talk_time), so a multi-line
+    -- exchange reads as one real-time conversation regardless of how sparse the
+    -- ambient cadence is.
+    enableBurstConversations = true,         -- false = legacy one-line-per-ambient-tick
+    convLineGap              = {1500, 4000}, -- ms between chain lines (jittered)
+    convMaxLines             = nil,          -- cap a chain's airtime (nil = run whole chain)
 
     -- Roster / selection-engine. The roster starts empty and grows lazily on demand
     -- up to maxCharacters, then self-balances (reuses existing voices) at the cap.
@@ -58,6 +68,14 @@ return {
     eventApproachDays    = 5,       -- "approach" window before an event starts
     eventAfterDays       = 3,       -- "after" window once an event ends
     enableEventBurst     = false,   -- one-shot "festival has begun" burst on activation
+
+    -- In-game player commands (.ac create / who / list / help). Out-of-character
+    -- worldbuilding/debug tooling: output goes to the requesting player only, never
+    -- into World chat. Player-created characters share the maxCharacters roster cap
+    -- and are ephemeral (in-memory, gone on restart) like every ambient character.
+    enablePlayerCommands = true,   -- master on/off for the .ac command surface
+    playerCreateGmOnly   = false,  -- true = restrict .ac create to GMs (player:IsGameMaster)
+    playerCreateLimit    = 5,      -- max characters one player may spawn per login session
 
     -- Optional WorldDBQuery string to source NPC names from the DB. Blank => names
     -- come from data/names.lua.

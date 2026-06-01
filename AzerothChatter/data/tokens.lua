@@ -9,9 +9,95 @@
 
   Token <-> accessor mapping lives in renderTokens (logic/chatter.lua); every accessor here
   is wired to a %token% there.
+
+  Tagged token pools (Part A). A few pools where context clearly matters (food, drink,
+  weather, activity, critter) use a string-first tagged shape, the SAME vocabulary the
+  chatter file uses for line tags: a bare string fits any context; a table is
+  { value=..., times=..., seasons=..., events=... } (and `proper=true` for proper-named
+  entries that must never take an article). selectTagged() biases the pick by the live
+  ctx, hard-excluding off-context entries and keeping untagged ones at weight 1.
+
+  The scoring itself is OWNED by the engine (logic/chatter.lua) -- it injects a single
+  scoreTokenEntry(tags, ctx) via P.setTagScorer so token entries and chatter lines share
+  one time/season/event factor implementation. With no scorer set, or context off / ctx
+  unavailable, every entry scores 1 -> selection is exactly today's uniform random
+  (the fallback invariant).
+
+  Articles (Part B). Countable-noun pools (food/drink/companion/toy/currency/...) store
+  values with NO leading article; the chatter supplies one via the combined %afood%/
+  %adrink%/%acompanion%/%atoy%/%acritter% tokens (vowel-aware a/an in one step, so no
+  look-ahead) or authors "some %food%". withArticle() never prefixes a proper name.
 ]]--
 
 local P = {}
+
+-- Tagged-pool machinery -----------------------------------------------------
+-- Engine-injected per-entry scorer: f(tags, ctx) -> weight (>=1 keep, 0 exclude).
+-- nil until logic/chatter.lua calls setTagScorer; until then every entry scores 1.
+local tagScorer = nil
+function P.setTagScorer(fn) tagScorer = fn end
+
+-- An entry is either a bare string (untagged value) or a table with `value` + tags.
+-- Normalize to (value, tags|nil, proper). tags=nil => untagged => always weight 1.
+local function splitEntry(entry)
+    if (type(entry) == "string") then return entry, nil, false end
+    return entry.value, entry, (entry.proper == true)
+end
+
+-- selectTagged(pool, ctx) -> a single value, biased by ctx. Weighted-random over
+-- survivors: untagged entries weigh 1; tagged entries weigh scoreTokenEntry(tags,ctx)
+-- (0 hard-excludes). No scorer / no ctx => every weight is 1 (uniform fallback). An
+-- all-excluded pool falls back to a uniform pick so a token never resolves empty.
+local function selectTagged(pool, ctx)
+    local n = #pool
+    if (n == 0) then return "" end
+    local weights, total = {}, 0
+    for i = 1, n do
+        local _, tags = splitEntry(pool[i])
+        local w = 1
+        if (tags ~= nil) and (tagScorer ~= nil) then w = tagScorer(tags, ctx) or 0 end
+        if (w < 0) then w = 0 end
+        weights[i] = w
+        total = total + w
+    end
+    if (total <= 0) then                              -- everything excluded: uniform fallback
+        local v = select(1, splitEntry(pool[math.random(n)]))
+        return v
+    end
+    local r = math.random() * total
+    for i = 1, n do
+        r = r - weights[i]
+        if (r <= 0) then return (select(1, splitEntry(pool[i]))) end
+    end
+    return (select(1, splitEntry(pool[n])))           -- float-rounding guard
+end
+
+-- Vowel-aware "a"/"an" for the %a...% combined tokens. Proper names pass through
+-- untouched (the entry's `proper` flag, decided by the caller). Empty -> "".
+local function articleFor(value)
+    local c = value:sub(1, 1):lower()
+    if (c:match("[aeiou]")) then return "an" end
+    return "a"
+end
+
+-- Pick a value from a (possibly tagged) pool and prepend the correct article unless
+-- the chosen entry is a proper name. Returns the article-bearing phrase in one step.
+local function selectWithArticle(pool, ctx)
+    local n = #pool
+    if (n == 0) then return "" end
+    -- Re-run the weighted selection but keep the proper flag of the WINNER. Cheapest
+    -- correct form: reuse selectTagged to choose the value, then look the value's
+    -- proper flag back up (values are unique within these pools).
+    local value = selectTagged(pool, ctx)
+    for i = 1, n do
+        local v, _, proper = splitEntry(pool[i])
+        if (v == value) then
+            if (proper) then return value end
+            return articleFor(value) .. " " .. value
+        end
+    end
+    return articleFor(value) .. " " .. value
+end
 
 -- Placeholder source tables -------------------------------------------------
 local zones = {
@@ -79,10 +165,12 @@ local professions = {
 -- (e.g. "Lots of folks out %activity% in %zone% cuz o' the %weather%").
 local activities = {
     "fishing", "mining", "gathering", "collecting herbs", "skinning",
-    "herbing", "prospecting", "farming mats", "picking herbs", "digging for ore",
-    "cooking up a feast", "looking for fishing pools", "grinding for leather",
+    "herbing", "prospecting", "farming mats", "digging for ore",
+    "cooking up a feast", "grinding for leather",
     "milling herbs", "disenchanting greens", "hunting for rare spawns",
-    "smelting bars", "chasing gathering nodes"
+    "smelting bars", "chasing gathering nodes",
+    { value="looking for fishing pools", times={"dawn","morning"} },
+    { value="picking herbs",             times={"dawn","morning"} },
 }
 
 -- Gathered goods --------------------------------------------------------------
@@ -137,26 +225,37 @@ local npcs = {
 local currencies = {
     "Emblem of Frost", "Emblem of Triumph", "Emblem of Conquest",
     "Emblem of Valor", "Emblem of Heroism", "Badge of Justice", "Honor",
-    "Stone Keeper's Shards", "a Champion's Seal", "Venture Coins",
+    "Stone Keeper's Shards", "Champion's Seal", "Venture Coins",
     "Dalaran Cooking Awards", "Dalaran Jewelcrafter's Tokens",
     "Spirit Shards", "Sidereal Essence"
 }
 
--- Tavern food (pairs naturally with %shop% and %drink%).
+-- Tavern food (pairs naturally with %shop% and %drink%). String-first tagged shape
+-- (see "Tagged token pools" below): bare string = fits any context; a table carries
+-- `value` + optional times/seasons/events tags. Articles are STRIPPED (Part B grammar
+-- rule) -- the chatter supplies them via %afood% or "some %food%".
 local foods = {
-    "a Dalaran Brownie", "Mulgore Spice Bread", "a Conjured Mana Strudel",
-    "Spice Bread", "a Tasty Cupcake", "Delicious Chocolate Cake",
+    "Dalaran Brownie", "Mulgore Spice Bread", "Conjured Mana Strudel",
+    "Tasty Cupcake", "Delicious Chocolate Cake",
     "Baked Manta Ray", "Worg Tartare", "Roasted Quail", "Smoked Salmon",
-    "Honey Bread", "a meat pie", "Cracker", "Mead Basted Caribou",
-    "a Bobbing Apple", "Spiced Beef Jerky"
+    "Honey Bread", "meat pie", "Cracker", "Mead Basted Caribou",
+    { value="eggs and bacon",  times={"dawn","morning"} },
+    { value="porridge",        times={dawn=3, morning=3} },
+    { value="Bobbing Apple",   events={"Hallow's End"} },   -- Hallow's End game item
+    { value="Spice Bread",     seasons={"winter"} },
+    { value="Spiced Beef Jerky", times={"night","dusk"} },
+    { value="Pilgrim's pie",   events={"Pilgrim's Bounty"} },
 }
 
--- Tavern drinks.
+-- Tavern drinks. Same tagged shape; articles stripped.
 local drinks = {
     "Thunder Ale", "Dwarven Stout", "Junglevine Wine", "Moonberry Juice",
-    "Sweet Nectar", "Honeymint Tea", "Cherry Grog", "Rhapsody Malt",
-    "a Bottle of Pinot Noir", "Conjured Crystal Water", "Skin of Dwarven Stout",
-    "Ironforge Rations", "Gordok Green Grog", "a tankard of ale", "mulled wine"
+    "Sweet Nectar", "Cherry Grog", "Rhapsody Malt",
+    "Bottle of Pinot Noir", "Conjured Crystal Water", "Skin of Dwarven Stout",
+    "Ironforge Rations", "Gordok Green Grog", "tankard of ale",
+    { value="Honeymint Tea", times={"dawn","morning"} },
+    { value="mulled wine",   seasons={"winter"} },
+    { value="hot cider",     seasons={"autumn"}, events={"Hallow's End"} },
 }
 
 -- Non-PvP / PvE titles (distinct from %pvptitle%: earned through deeds, not arenas).
@@ -177,13 +276,20 @@ local tradegoods = {
     "Primal Mooncloth", "Heavy Knothide Leather"
 }
 
--- Vanity companion pets (sits nicely beside %critter%).
+-- Vanity companion pets (sits nicely beside %critter%). Common-noun pets carry NO
+-- article (Part B); proper-named pets are flagged `proper=true` so %acompanion% never
+-- prepends an article to a name (e.g. "a Pengu" is wrong). Seasonal-drop pets tagged.
 local companions = {
-    "a Mechanical Squirrel", "Mini Diablo", "a Pandaren Monk",
-    "an Onyxian Whelpling", "a Tiny Crimson Whelpling", "a Disgusting Oozeling",
-    "a Sprite Darter Hatchling", "Lil' K.T.", "a Hyacinth Macaw",
-    "a Calico Cat", "a Cockroach", "a Captured Firefly", "Pengu",
-    "a Sinister Squashling", "an Albino Snake", "Speedy the turtle"
+    "Mechanical Squirrel", "Pandaren Monk",
+    "Onyxian Whelpling", "Tiny Crimson Whelpling", "Disgusting Oozeling",
+    "Sprite Darter Hatchling", "Hyacinth Macaw",
+    "Calico Cat", "Cockroach", "Captured Firefly",
+    "Albino Snake",
+    { value="Sinister Squashling", events={"Hallow's End"} },  -- Hallow's End pet
+    { value="Mini Diablo",         proper=true },
+    { value="Lil' K.T.",           proper=true },
+    { value="Pengu",               proper=true },
+    { value="Speedy the turtle",   proper=true },
 }
 
 -- Gear enchantments (overheard crafting/enchanter chatter).
@@ -194,14 +300,17 @@ local enchants = {
     "Titanweave", "Greater Inscription of the Pinnacle"
 }
 
--- Novelty/fun items (joke toys and trinkets, not gear).
+-- Novelty/fun items (joke toys and trinkets, not gear). Articles stripped (Part B) so
+-- chatter supplies them via %atoy% or "some %toy%".
 local toys = {
-    "a Noggenfogger Elixir", "an Orb of Deception",
-    "a Piccolo of the Flaming Fire", "a Gnomish Army Knife",
+    "Noggenfogger Elixir", "Orb of Deception",
+    "Piccolo of the Flaming Fire", "Gnomish Army Knife",
     "Decahedral Dwarven Dice", "Savory Deviate Delight",
-    "a Carrot on a Stick", "the Robot Chicken", "a Hallowed Wand",
-    "a Foam Sword Rack", "the Romantic Picnic Basket",
-    "a Snowball", "a Faded Photograph", "a Spectral Tiger Cub figurine"
+    "Carrot on a Stick", "Robot Chicken", "Foam Sword Rack",
+    "Romantic Picnic Basket", "Faded Photograph",
+    "Spectral Tiger Cub figurine",
+    { value="Hallowed Wand", events={"Hallow's End"} },
+    { value="Snowball",      seasons={"winter"}, events={"Winter Veil"} },
 }
 
 local cities = {
@@ -223,10 +332,13 @@ local monsters = {
 }
 
 -- Passive wildlife/critters (for ambient "a %critter% wandered by"-style chatter).
+-- Bare nouns throughout -- the call site supplies the article via %acritter%. A few
+-- carry light seasonal tags where the wildlife clearly tracks the season.
 local critters = {
     "deer", "skunk", "rabbit", "squirrel", "fox", "boar", "cat", "chicken",
     "frog", "sheep", "cow", "prairie dog", "mouse", "toad", "crab", "ram",
-    "fawn", "gazelle", "hare", "owl"
+    "gazelle", "hare", "owl",
+    { value="fawn", seasons={"spring"} },
 }
 
 local bosses = {
@@ -361,10 +473,17 @@ local tales = {
     "the fall of the Lich King"
 }
 
+-- Weather is descriptive (used bare, e.g. "cuz o' the %weather%"), so its baked
+-- articles stay (Part B targets a/an-countable nouns, not these). Tagged by season
+-- where the weather clearly tracks it; untagged ones fit anywhere.
 local weathers = {
-    "rain", "snow", "fog", "clear skies", "a thunderstorm", "heavy mist",
-    "a blizzard", "drizzle", "warm sunshine", "an overcast sky",
-    "howling wind", "sleet"
+    "rain", "fog", "clear skies", "a thunderstorm", "heavy mist",
+    "drizzle", "howling wind",
+    { value="snow",            seasons={"winter"} },
+    { value="a blizzard",      seasons={"winter"} },
+    { value="sleet",           seasons={"winter","autumn"} },
+    { value="warm sunshine",   seasons={"summer","spring"} },
+    { value="an overcast sky", seasons={"autumn","winter"} },
 }
 
 -- Accessors -----------------------------------------------------------------
@@ -376,24 +495,24 @@ function P.selectRandomRole()         return roles[math.random(#roles)] end
 function P.selectRandomClass()        return classes[math.random(#classes)] end
 function P.selectRandomBattleground() return battlegrounds[math.random(#battlegrounds)] end
 function P.selectRandomProfession()   return professions[math.random(#professions)] end
-function P.selectRandomActivity()     return activities[math.random(#activities)] end
+function P.selectRandomActivity(_, ctx) return selectTagged(activities, ctx) end
 function P.selectRandomHerb()         return herbs[math.random(#herbs)] end
 function P.selectRandomOre()          return ores[math.random(#ores)] end
 function P.selectRandomGem()          return gems[math.random(#gems)] end
 function P.selectRandomFish()         return fish[math.random(#fish)] end
 function P.selectRandomNpc()          return npcs[math.random(#npcs)] end
 function P.selectRandomCurrency()     return currencies[math.random(#currencies)] end
-function P.selectRandomFood()         return foods[math.random(#foods)] end
-function P.selectRandomDrink()        return drinks[math.random(#drinks)] end
+function P.selectRandomFood(_, ctx)   return selectTagged(foods, ctx) end
+function P.selectRandomDrink(_, ctx)  return selectTagged(drinks, ctx) end
 function P.selectRandomTitle()        return titles[math.random(#titles)] end
 function P.selectRandomTradegood()    return tradegoods[math.random(#tradegoods)] end
-function P.selectRandomCompanion()    return companions[math.random(#companions)] end
+function P.selectRandomCompanion(_, ctx) return selectTagged(companions, ctx) end
 function P.selectRandomEnchant()      return enchants[math.random(#enchants)] end
-function P.selectRandomToy()          return toys[math.random(#toys)] end
+function P.selectRandomToy(_, ctx)    return selectTagged(toys, ctx) end
 function P.selectRandomCity()         return cities[math.random(#cities)] end
 function P.selectRandomRace()         return races[math.random(#races)] end
 function P.selectRandomMonster()      return monsters[math.random(#monsters)] end
-function P.selectRandomCritter()      return critters[math.random(#critters)] end
+function P.selectRandomCritter(_, ctx) return selectTagged(critters, ctx) end
 function P.selectRandomBoss()         return bosses[math.random(#bosses)] end
 function P.selectRandomConsumable()   return consumables[math.random(#consumables)] end
 function P.selectRandomItem()         return items[math.random(#items)] end
@@ -410,7 +529,16 @@ function P.selectRandomTimeOfDay()    return timesofday[math.random(#timesofday)
 function P.selectRandomShop()         return shops[math.random(#shops)] end
 function P.selectRandomRoute()        return routes[math.random(#routes)] end
 function P.selectRandomTale()         return tales[math.random(#tales)] end
-function P.selectRandomWeather()      return weathers[math.random(#weathers)] end
+function P.selectRandomWeather(_, ctx) return selectTagged(weathers, ctx) end
+
+-- Article-combined accessors (Part B): pick a context-biased value AND prepend the
+-- correct "a"/"an" in one step. Proper-named entries pass through with no article.
+-- Wired to %afood%/%adrink%/%acompanion%/%atoy%/%acritter% in renderTokens.
+function P.selectRandomAFood(_, ctx)      return selectWithArticle(foods, ctx) end
+function P.selectRandomADrink(_, ctx)     return selectWithArticle(drinks, ctx) end
+function P.selectRandomACompanion(_, ctx) return selectWithArticle(companions, ctx) end
+function P.selectRandomAToy(_, ctx)       return selectWithArticle(toys, ctx) end
+function P.selectRandomACritter(_, ctx)   return selectWithArticle(critters, ctx) end
 
 -- Numeric placeholders. Returned as game-formatted strings.
 -- %gold%: realistic magnitudes, suffixed "g" (WoW convention).

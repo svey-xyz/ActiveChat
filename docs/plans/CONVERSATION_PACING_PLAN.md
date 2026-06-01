@@ -15,13 +15,23 @@
 
 ## Completed
 
-- None yet — all phases below are planned.
+- **Phase 1 — Burst-paced conversations (2026-06-01).** Config `enableBurstConversations`
+  / `convLineGap` / `convMaxLines` added to `AzerothChatter.lua`, pulled into locals in
+  `logic/chatter.lua`. `speak` is now start-only for multi-line items: it emits line 1,
+  sets `st.bursting`/`st.aired=1`, and hands the rest to `runChainBurst` — a one-shot
+  (`repeats=1`) self-rescheduling timer that re-voices the FIXED cast via `nextLine`'s
+  continue path (nil candidates) at jittered `convLineGap`, honoring `convMaxLines` and
+  stopping when `st.item` clears / state is gone (no orphan timers). `speak` early-returns
+  for a `bursting` channel (no double-emit / second item). `nextLine`'s fresh-start path
+  guards against nil candidates. Flag off ⇒ exact legacy cadence; single `line` items
+  untouched. Render/emit factored into `deliver` (shared by `speak` + runner). ZONE TODO
+  comment left on `runChainBurst` (must key delivery group by zone bucket later). config.md
+  + README updated. lua_check green. *Plan retained only for the zone-reconciliation
+  follow-up (build step 4); delete once that lands.*
 
 ---
 
-## Phases (planned)
-
-### **Phase 1 — Burst-paced conversations**
+## Phase 1 — Burst-paced conversations (implemented — kept for context)
 
 #### Note
 

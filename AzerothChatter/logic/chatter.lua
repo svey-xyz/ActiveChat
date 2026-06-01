@@ -20,6 +20,9 @@ if enableScript then
 -- Config this engine file uses. logic/context.lua reads the rest straight from AzerothChatter.lua.
 local talk_time               = config.talk_time
 local faction_talk_time       = config.faction_talk_time
+local enableBurstConversations = config.enableBurstConversations
+local convLineGap             = config.convLineGap or {1500, 4000}
+local convMaxLines            = config.convMaxLines
 local maxCharacters           = config.maxCharacters
 local maxCharactersPerFaction = config.maxCharactersPerFaction
 local newCharacterWeight      = config.newCharacterWeight
@@ -40,6 +43,9 @@ local seasonMatchStrength     = config.seasonMatchStrength
 local eventApproachDays       = config.eventApproachDays
 local eventAfterDays          = config.eventAfterDays
 local enableEventBurst        = config.enableEventBurst
+local enablePlayerCommands    = config.enablePlayerCommands
+local playerCreateGmOnly      = config.playerCreateGmOnly
+local playerCreateLimit       = config.playerCreateLimit or 5
 local ns                      = config.ns
 
 local t = {}
@@ -428,15 +434,48 @@ local function scaleModifier(m)
     return out
 end
 
--- generateCharacter(faction) -> a full character table, registered into roster /
--- rosterByFaction with its name marked used. Does NOT enforce maxCharacters --
--- the cap is checked by resolveSpeaker before calling this.
-local function generateCharacter(faction)
+-- Trait-vocabulary membership sets, derived from the same tables the pickers use, so
+-- arg-form validation (createCharacter / .ac create) auto-tracks new vocab. roleKeys/
+-- moodKeys are arrays above; these are {key=true} sets for O(1) checks + valid-set lists.
+local function isMember(set, value)
+    return (type(value) == "string") and (set[value] == true)
+end
+local roleSet = {}; for _, k in ipairs(roleKeys) do roleSet[k] = true end
+local moodSet = {}; for _, k in ipairs(moodKeys) do moodSet[k] = true end
+local areaSet = {}; for _, k in ipairs(AREAS)    do areaSet[k] = true end
+local genderSet = { male = true, female = true, neutral = true }
+local factionSet = { alliance = true, horde = true }
+
+-- createCharacter(opts) -> character | nil, err. The roster factory. opts (all
+-- optional): faction, role, personality, area, gender, name. Any missing field is
+-- ROLLED exactly as ambient generation does -- the unrolled path below is identical
+-- in RNG order and registration to the pre-refactor generateCharacter, so ambient
+-- spawning is unchanged (regression). A supplied override REPLACES that field's roll
+-- (and its RNG draw): expected, since explicit creation deliberately bypasses the
+-- weighting. Validates supplied traits (unknown role/mood/area/gender/faction ->
+-- nil,err); a supplied name is deduped against usedNames (auto-suffixed if taken).
+-- Does NOT enforce maxCharacters -- the cap is the caller's decision (resolveSpeaker
+-- yields, .ac create refuses) so ambient lazy growth keeps its existing semantics.
+local function createCharacter(opts)
+    opts = opts or {}
+
+    -- Validate any supplied overrides up front (menus only offer valid values, but
+    -- the arg form must guard). Faction resolves to a coin flip when unspecified.
+    if (opts.faction ~= nil) and (not isMember(factionSet, opts.faction)) then
+        return nil, "faction"
+    end
+    if (opts.role ~= nil)        and (not isMember(roleSet,   opts.role))        then return nil, "role"   end
+    if (opts.personality ~= nil) and (not isMember(moodSet,   opts.personality)) then return nil, "mood"   end
+    if (opts.area ~= nil)        and (not isMember(areaSet,   opts.area))        then return nil, "area"   end
+    if (opts.gender ~= nil)      and (not isMember(genderSet, opts.gender))      then return nil, "gender" end
+
+    local faction = opts.faction or (math.random() < 0.5 and "alliance" or "horde")
+
     -- Conditioning traits first so they can tilt role/mood. gender and homeCity are
     -- rolled before role/mood, then fed into the pickers via the gender/faction/city
     -- bias maps below. homeCity is a flat draw (cities are roughly equal); only its
     -- affinity (CITY_BIAS) tilts the resident, not its draw frequency.
-    local gender   = rollGender()
+    local gender   = opts.gender or rollGender()
     local homeCity = (faction == "horde")
         and pickFrom(hordeCities)
         or  pickFrom(allianceCities)
@@ -449,42 +488,69 @@ local function generateCharacter(faction)
 
     -- Role always uses its base weight. Conditional modifiers (faction/gender/home-city)
     -- apply only when the correlation layer is on. All factors are softened by
-    -- traitCorrelationStrength via scaleModifier.
-    local roleMods
-    if (enableTraitCorrelation) then
-        roleMods = {
-            scaleModifier(factionRoles),
-            scaleModifier(genderRoles),
-            scaleModifier(cityRoles),
-        }
+    -- traitCorrelationStrength via scaleModifier. A supplied role bypasses the picker.
+    local role = opts.role
+    if (not role) then
+        local roleMods
+        if (enableTraitCorrelation) then
+            roleMods = {
+                scaleModifier(factionRoles),
+                scaleModifier(genderRoles),
+                scaleModifier(cityRoles),
+            }
+        end
+        role = weightedPick(roleKeys, function(k) return ROLES[k].weight end, roleMods)
     end
-    local role = weightedPick(roleKeys, function(k) return ROLES[k].weight end, roleMods)
 
     -- Personality honors its weight + role/gender/home-city bias only when the
     -- correlation layer is on; off => legacy uniform draw (preserves today's histogram).
-    local personality
-    if (enableTraitCorrelation) then
-        local moodMods = {
-            scaleModifier(ROLES[role].moodBias),
-            scaleModifier(genderMoods),
-            scaleModifier(cityMoods),
-        }
-        personality = weightedPick(moodKeys, function(k) return PERSONALITIES[k].weight end, moodMods)
-    else
-        personality = moodKeys[math.random(#moodKeys)]
+    -- A supplied personality bypasses the picker.
+    local personality = opts.personality
+    if (not personality) then
+        if (enableTraitCorrelation) then
+            local moodMods = {
+                scaleModifier(ROLES[role].moodBias),
+                scaleModifier(genderMoods),
+                scaleModifier(cityMoods),
+            }
+            personality = weightedPick(moodKeys, function(k) return PERSONALITIES[k].weight end, moodMods)
+        else
+            personality = moodKeys[math.random(#moodKeys)]
+        end
     end
 
     -- area: biased to the role's default area (~65%), else a random AREAS member,
-    -- so the roster reads roughly role-typed without being rigid.
+    -- so the roster reads roughly role-typed without being rigid. A supplied area
+    -- bypasses the roll.
     -- FUTURE HOOK: derive area from a real player's current zone; v1 is static.
-    local area
-    if (math.random() < 0.65) and (ROLES[role].area) then
-        area = ROLES[role].area
-    else
-        area = AREAS[math.random(#AREAS)]
+    local area = opts.area
+    if (not area) then
+        if (math.random() < 0.65) and (ROLES[role].area) then
+            area = ROLES[role].area
+        else
+            area = AREAS[math.random(#AREAS)]
+        end
     end
 
-    local name, nameParts = generateName(faction, role, personality, gender)
+    -- Name: roll a gender-correct one unless supplied. A supplied name is deduped
+    -- against the live roster -- auto-suffix " II", " III", ... rather than reject, so
+    -- a player asking for a taken name still gets a character. nameParts.first is set
+    -- so address/pronoun tokens still work on a custom name.
+    local name, nameParts
+    if (opts.name) then
+        name = opts.name
+        if (usedNames[name]) then
+            local n = 2
+            local base = name
+            while usedNames[name] do
+                name = base .. " " .. tostring(n)
+                n = n + 1
+            end
+        end
+        nameParts = { first = name }
+    else
+        name, nameParts = generateName(faction, role, personality, gender)
+    end
 
     local character = {
         name         = name,
@@ -506,6 +572,14 @@ local function generateCharacter(faction)
     bucket[#bucket + 1] = character
     usedNames[character.name] = true
     return character
+end
+
+-- generateCharacter(faction) -> a full character table, registered into roster /
+-- rosterByFaction with its name marked used. Thin wrapper over createCharacter with
+-- only the faction fixed: the ambient lazy-growth path. Does NOT enforce maxCharacters
+-- -- the cap is checked by resolveSpeaker before calling this.
+local function generateCharacter(faction)
+    return createCharacter({ faction = faction })
 end
 
 -- Roster-query seam: two functions funnel all speaker selection.
@@ -625,12 +699,15 @@ end
 -- timeFactor -> parallel to areaFactor: 1.0 if timesGlobal; weight*strength if
 -- ctx.timeKey is tagged; 0 (EXCLUDE) if not. Forced 1.0 when flags off or
 -- ctx.timeKey unavailable, so a tagged line never excludes itself blindly.
-local function timeFactor(item, c)
-    if (item.timesGlobal) then return 1.0 end             -- untagged = any time
+-- Takes explicit (global, map) so both line items AND tagged token entries score
+-- through the same code (Phase 8: tokenScorer below normalizes raw token tags into
+-- this same shape).
+local function timeFactor(timesGlobal, times, c)
+    if (timesGlobal) then return 1.0 end                  -- untagged = any time
     -- Context off or unknown -> behave like today's random selection (no exclude).
     if (not enableContextAware) or (not enableTimeContext) then return 1.0 end
     if (not c) or (not c.timeKey) then return 1.0 end
-    local w = c.timeKey and item.times[c.timeKey]
+    local w = times[c.timeKey]
     if (not w) then return 0 end                          -- HARD EXCLUDE (off-bucket)
     return w * timeMatchStrength
 end
@@ -638,12 +715,12 @@ end
 -- seasonFactor -> parallel to timeFactor: 1.0 if seasonsGlobal; weight*strength if
 -- ctx.season is tagged; 0 (EXCLUDE) if not. Forced 1.0 when flags off or ctx.season
 -- unavailable.
-local function seasonFactor(item, c)
-    if (item.seasonsGlobal) then return 1.0 end           -- untagged = any season
+local function seasonFactor(seasonsGlobal, seasons, c)
+    if (seasonsGlobal) then return 1.0 end                -- untagged = any season
     -- Context off or unknown -> behave like today's random selection (no exclude).
     if (not enableContextAware) or (not enableSeasonContext) then return 1.0 end
     if (not c) or (not c.season) then return 1.0 end
-    local w = c.season and item.seasons[c.season]
+    local w = seasons[c.season]
     if (not w) then return 0 end                          -- HARD EXCLUDE (off-season)
     return w * seasonMatchStrength
 end
@@ -653,13 +730,13 @@ end
 -- ctx.active AND no schedule -- never exclude on a guess). Otherwise 1.0 when a
 -- tagged event is live, or within eventWindow: "approach" (== ctx.nextEvent within
 -- eventApproachDays) / "after" (== ctx.lastEvent within eventAfterDays); else 0.
-local function eventFactor(item, c)
-    if (item.eventsGlobal) then return 1.0 end            -- untagged = any/no event
+local function eventFactor(eventsGlobal, events, eventWindow, c)
+    if (eventsGlobal) then return 1.0 end                 -- untagged = any/no event
     if (not enableContextAware) or (not enableEventContext) then return 1.0 end
 
     local active   = c and c.active
     local liveKnown = active and (next(active) ~= nil)
-    local window   = item.eventWindow or "active"
+    local window   = eventWindow or "active"
     -- If neither the active set nor the relevant nearest-event slot is known, we
     -- can't judge -> don't exclude (fallback invariant).
     local nearKnown = false
@@ -669,7 +746,7 @@ local function eventFactor(item, c)
 
     -- Active now (any window includes the live event).
     if (liveKnown) then
-        for _, name in ipairs(item.events) do
+        for _, name in ipairs(events) do
             if (active[name]) then return 1.0 end
         end
     end
@@ -677,7 +754,7 @@ local function eventFactor(item, c)
     -- Approach window: the line's event is the soonest-upcoming, within the lead.
     if (window == "approach") and (c and c.nextEvent) then
         if (c.nextEvent.daysAway <= eventApproachDays) then
-            for _, name in ipairs(item.events) do
+            for _, name in ipairs(events) do
                 if (name == c.nextEvent.name) then return 1.0 end
             end
         end
@@ -686,7 +763,7 @@ local function eventFactor(item, c)
     -- After window: the line's event is the most-recently-ended, within the tail.
     if (window == "after") and (c and c.lastEvent) then
         if (c.lastEvent.daysAgo <= eventAfterDays) then
-            for _, name in ipairs(item.events) do
+            for _, name in ipairs(events) do
                 if (name == c.lastEvent.name) then return 1.0 end
             end
         end
@@ -694,6 +771,27 @@ local function eventFactor(item, c)
 
     return 0                                              -- HARD EXCLUDE (out of window)
 end
+
+-- scoreTokenEntry(tags, c) -> weight for a TAGGED TOKEN-POOL entry (Phase 8). Shares
+-- the exact time/season/event factor code lines use, so a token value "fits the
+-- moment" by the same rules a chatter line does. `tags` is the raw entry table from
+-- data/tokens.lua ({ value=..., times/seasons/events=... }); normalize its sub-fields
+-- on the fly (cheap, only for the few tagged pools) then multiply the factors. Any
+-- factor returning 0 hard-excludes the value; with context off / ctx unavailable every
+-- factor is 1 -> weight 1 (uniform fallback, preserved). Injected via pools.setTagScorer.
+local function scoreTokenEntry(tags, c)
+    local timesGlobal, times       = normalizeWeightedSet(tags.times)
+    local seasonsGlobal, seasons   = normalizeWeightedSet(tags.seasons)
+    local eventsGlobal, eventsList = normalizeEvents(tags.events)
+    local tf = timeFactor(timesGlobal, times, c)
+    if (tf <= 0) then return 0 end
+    local sf = seasonFactor(seasonsGlobal, seasons, c)
+    if (sf <= 0) then return 0 end
+    local ef = eventFactor(eventsGlobal, eventsList, "active", c)
+    if (ef <= 0) then return 0 end
+    return tf * sf * ef
+end
+pools.setTagScorer(scoreTokenEntry)
 
 -- excludeFactor -> 1.0 or 0. The NEGATIVE gate over notTimes/notSeasons/notEvents,
 -- checked for EVERY line (even global ones) so a universal line can carve out one
@@ -736,11 +834,11 @@ end
 local function scoreLine(item, char, tick)
     local af = areaFactor(item, char)
     if (af <= 0) then return 0 end                        -- area can hard-exclude
-    local tf = timeFactor(item, ctx)
+    local tf = timeFactor(item.timesGlobal, item.times, ctx)
     if (tf <= 0) then return 0 end                        -- times can hard-exclude (off-bucket)
-    local sf = seasonFactor(item, ctx)
+    local sf = seasonFactor(item.seasonsGlobal, item.seasons, ctx)
     if (sf <= 0) then return 0 end                        -- seasons can hard-exclude (off-season)
-    local ef = eventFactor(item, ctx)
+    local ef = eventFactor(item.eventsGlobal, item.events, item.eventWindow, ctx)
     if (ef <= 0) then return 0 end                        -- events can hard-exclude (none active)
     local xf = excludeFactor(item, ctx)
     if (xf <= 0) then return 0 end                        -- notTimes/notSeasons/notEvents can hard-exclude
@@ -954,7 +1052,11 @@ local function nextLine(channel, candidates, initiator, castFaction)
         return item.data[ti], speaker, st.audience, item, target
     end
 
-    -- Start a fresh item for this speaker.
+    -- Start a fresh item for this speaker. The continue branch above handles
+    -- mid-chain advancement off st.item/st.cast alone; the burst runner relies on
+    -- that and calls in with nil candidates/initiator. Guard so a spurious nil-call
+    -- (chain already cleared) returns cleanly instead of indexing nil candidates.
+    if (not candidates) or (not initiator) then return nil end
     globalTick = globalTick + 1
     local item = pickLine(candidates, initiator, globalTick)
     if (not item) then return nil end                        -- nothing to say
@@ -1094,6 +1196,11 @@ local tokenResolvers = {
     level      = pools.selectRandomLevel,        gearscore  = pools.selectRandomGearscore,
     shop       = pools.selectRandomShop,         route      = pools.selectRandomRoute,
     tale       = pools.selectRandomTale,         weather    = pools.selectRandomWeather,
+    -- Combined article tokens (Part B): "a/an <value>" in one step, vowel-aware, never
+    -- prefixing a proper name. Use these instead of "a %food%" so a/an is always right.
+    afood      = pools.selectRandomAFood,        adrink     = pools.selectRandomADrink,
+    acompanion = pools.selectRandomACompanion,   atoy       = pools.selectRandomAToy,
+    acritter   = pools.selectRandomACritter,
     -- Speaker pronouns, resolved from speaker.gender (default neutral when unset).
     heshe     = function(speaker)       local g = speaker and speaker.gender; return g == "male" and "he"  or g == "female" and "she"   or "they"  end,
     himher    = function(speaker)       local g = speaker and speaker.gender; return g == "male" and "him" or g == "female" and "her"   or "them"  end,
@@ -1157,17 +1264,74 @@ local function emit(audience, msg)
     end
 end
 
+-- Render + route one already-resolved chain step (shared by speak and the burst
+-- runner so they format/emit identically).
+local function deliver(raw, speaker, audience, item, target)
+    local body = renderTokens(raw, speaker, ctx, item, target)
+    recordTopic(raw)                                         -- FORWARD-COMPAT no-op (chat-topic awareness)
+    emit(audience, formatWorld(speaker, body))
+end
+
+-- runChainBurst -- self-rescheduling one-shot timer that plays the rest of an
+-- in-progress duo/group at convLineGap pacing, decoupled from the ambient cadence.
+-- The cast is FIXED at start (st.cast); this only re-voices it via nextLine's
+-- continue path (nil candidates/initiator). It reschedules until the chain clears,
+-- a convMaxLines airtime cap is hit, or the channel state is gone (interrupted) --
+-- so one-shot timers never accumulate and an interrupted chain ends without orphans.
+-- ZONE NOTE: with zone-aware delivery, key t.conv by zone bucket; this runner must
+-- target the same delivery group the chain started in (carry the bucket, not just channel).
+local function runChainBurst(channel, castFaction)
+    local gap = math.random(convLineGap[1], convLineGap[2])
+    CreateLuaEvent(function()
+        local st = t.conv[channel]
+        if (not st) or (not st.item) or (st.item.kind == "line") then
+            if (st) then st.bursting = false end             -- finished/cleared/interrupted
+            return
+        end
+        -- Airtime cap: stop voicing further lines, abandon the chain cleanly.
+        if (convMaxLines) and (st.aired) and (st.aired >= convMaxLines) then
+            st.item, st.bursting = nil, false
+            return
+        end
+        local raw, speaker, audience, item, target = nextLine(channel, nil, nil, castFaction)
+        if (raw) then
+            st.aired = (st.aired or 1) + 1
+            deliver(raw, speaker, audience, item, target)
+        end
+        if (t.conv[channel]) and (t.conv[channel].item) then
+            runChainBurst(channel, castFaction)              -- more lines: reschedule
+        elseif (t.conv[channel]) then
+            t.conv[channel].bursting = false                 -- chain done: release the channel
+        end
+    end, gap, 1)
+end
+
 -- Drive one emission on `channel`: resolve a speaker, pick & render a line, route
 -- it by the line's audience tag. Returns silently if nothing can be said.
 local function speak(channel, candidates, castFaction)
+    -- A mid-flight burst owns this channel; the ambient tick must yield so it never
+    -- starts a second item or double-emits a line the runner already handles.
+    local cur = t.conv[channel]
+    if (enableBurstConversations) and (cur) and (cur.bursting) then return end
+
     refreshCtx()                                             -- cheap (TTL-guarded); keeps ctx fresh
     local initiator = resolveSpeaker(castFaction)
     if (not initiator) then return end                       -- no character available
     local raw, speaker, audience, item, target = nextLine(channel, candidates, initiator, castFaction)
     if (not raw) then return end
-    local body = renderTokens(raw, speaker, ctx, item, target)
-    recordTopic(raw)                                         -- FORWARD-COMPAT no-op (chat-topic awareness)
-    emit(audience, formatWorld(speaker, body))
+    deliver(raw, speaker, audience, item, target)
+
+    -- Burst hand-off: nextLine left st.item set => this is a multi-line chain mid-flight.
+    -- speak emitted line 1; hand the rest to the burst runner and stop advancing the
+    -- chain on ambient ticks. Legacy (flag off): leave st.item for the next tick to advance.
+    if (enableBurstConversations) then
+        local st = t.conv[channel]
+        if (st) and (st.item) and (st.item.kind ~= "line") then
+            st.bursting = true
+            st.aired    = 1                                  -- line 1 just aired (for convMaxLines)
+            runChainBurst(channel, castFaction)
+        end
+    end
 end
 
 -- Events --------------------------------------------------------------------
@@ -1206,6 +1370,322 @@ if (type(PrintInfo) == "function") then
         #allianceCandidates, #hordeCandidates,
         enableContextAware and "on" or "off",
         enableFactionChat and "on" or "off"))
+end
+
+-- Player commands (.ac …) --------------------------------------------------
+-- Out-of-character worldbuilding/debug tooling, NOT chatter: all output goes to the
+-- requesting player via SendBroadcastMessage, never into World chat. Gated on
+-- enablePlayerCommands; the whole block is skipped (and no hooks registered) when off.
+-- Player-created characters share the maxCharacters cap with ambient spawns (simplest
+-- model; see the cap note in .ac create) and are ephemeral like every roster member.
+if (enablePlayerCommands) then
+
+    -- Per-player scratch: gossip create wizard state + per-session create count, keyed
+    -- by GUIDLow. Cleared on confirm/cancel/logout so a relog resets the spam allowance.
+    local pcreate     = {}   -- guidLow -> partial { faction, role, personality, gender, area, name }
+    local createCount = {}   -- guidLow -> characters spawned this session
+
+    -- A dedicated player-gossip menu id for the create wizard. Must not collide with a
+    -- real gossip_menu DB row; high custom ids are conventional for ALE-only menus.
+    local PCREATE_MENU = 0xACC0
+
+    local function msg(player, line)
+        player:SendBroadcastMessage(line)
+    end
+
+    -- Compact one-line roster-entry summary (used by .ac list and .ac who header).
+    local function summaryLine(c)
+        return string.format("[ActiveChat] %s -- %s %s, %s | %s, %s",
+            c.name, c.faction, c.role, c.gender, c.personality, c.area)
+    end
+
+    local function helpText(player)
+        msg(player, "[ActiveChat] commands (output is private; characters are in-memory and vanish on restart):")
+        msg(player, "  .ac create                     - open the trait-picker menu")
+        msg(player, "  .ac create k=v [k=v ...]        - faction/role/mood/gender/area/name=\"...\"")
+        msg(player, "  .ac who <name>                  - show a roster character's traits")
+        msg(player, "  .ac list [alliance|horde]       - list current roster")
+        msg(player, "  .ac help                        - this text")
+    end
+
+    -- Sorted, comma-joined valid set for a trait dimension (error messages list it).
+    local function joinKeys(arr)
+        local copy = {}
+        for i = 1, #arr do copy[i] = arr[i] end
+        table.sort(copy)
+        return table.concat(copy, ", ")
+    end
+
+    -- .ac who <name> -- case-insensitive exact, then case-insensitive prefix. Ambiguous
+    -- prefix (>1 match, no exact) lists the candidate names instead of dumping one.
+    local function cmdWho(player, name)
+        if (not name) or (name == "") then
+            msg(player, "[ActiveChat] usage: .ac who <name>")
+            return
+        end
+        local lname = string.lower(name)
+        local exact, prefix = nil, {}
+        for _, c in ipairs(roster) do
+            local lc = string.lower(c.name)
+            if (lc == lname) then exact = c; break end
+            if (string.sub(lc, 1, #lname) == lname) then prefix[#prefix + 1] = c end
+        end
+        local hit = exact or (#prefix == 1 and prefix[1]) or nil
+        if (not hit) then
+            if (#prefix > 1) then
+                msg(player, string.format("[ActiveChat] %d matches for '%s':", #prefix, name))
+                for _, c in ipairs(prefix) do msg(player, "  " .. c.name) end
+            else
+                msg(player, string.format("[ActiveChat] no roster character matching '%s'.", name))
+            end
+            return
+        end
+        -- Compact dump.
+        msg(player, string.format("[ActiveChat] %s -- %s %s, %s",
+            hit.name, hit.faction, hit.role, hit.gender))
+        msg(player, string.format("  personality: %s   area: %s   home: %s",
+            hit.personality, hit.area, hit.homeCity))
+        msg(player, string.format("  chattiness: %.2f   friendliness: %.2f",
+            hit.chattiness or 0, hit.friendliness or 0))
+    end
+
+    -- .ac list [faction] -- one line per character, capped output so a full roster
+    -- doesn't flood chat; prints "+N more" when truncated.
+    local LIST_CAP = 40
+    local function cmdList(player, faction)
+        if (faction ~= nil) and (not isMember(factionSet, faction)) then
+            msg(player, "[ActiveChat] faction must be alliance or horde.")
+            return
+        end
+        local source = faction and rosterByFaction[faction] or roster
+        local n = #source
+        if (n == 0) then
+            msg(player, "[ActiveChat] roster is empty (it grows as the world chatters).")
+            return
+        end
+        msg(player, string.format("[ActiveChat] %d character%s%s:",
+            n, n == 1 and "" or "s", faction and (" (" .. faction .. ")") or ""))
+        local shown = math.min(n, LIST_CAP)
+        for i = 1, shown do msg(player, "  " .. summaryLine(source[i]):gsub("^%[ActiveChat%] ", "")) end
+        if (n > shown) then msg(player, string.format("  ... +%d more", n - shown)) end
+    end
+
+    -- GM gate for create (when playerCreateGmOnly). Defensive about which method the
+    -- build exposes (IsGameMaster / IsGM / GetGMRank) so it works across ALE versions.
+    local function isGm(player)
+        if (type(player.IsGameMaster) == "function") then return player:IsGameMaster() end
+        if (type(player.IsGM) == "function")          then return player:IsGM() end
+        if (type(player.GetGMRank) == "function")     then return (player:GetGMRank() or 0) > 0 end
+        return false
+    end
+
+    -- Shared create entrypoint: gate (GM-only + per-session limit + roster cap), then
+    -- createCharacter, then announce to the requester. Returns the character or nil.
+    local function doCreate(player, opts)
+        if (playerCreateGmOnly) and (not isGm(player)) then
+            msg(player, "[ActiveChat] .ac create is restricted to GMs on this server.")
+            return nil
+        end
+        local guid = player:GetGUIDLow()
+        local used = createCount[guid] or 0
+        if (used >= playerCreateLimit) then
+            msg(player, string.format("[ActiveChat] you've created your session limit of %d characters.", playerCreateLimit))
+            return nil
+        end
+        -- Resolve the faction the cap is checked against (createCharacter coin-flips an
+        -- unspecified faction, but the cap pre-check needs a concrete one; mirror its
+        -- default so the check matches the spawn).
+        local faction = opts.faction or (math.random() < 0.5 and "alliance" or "horde")
+        opts.faction = faction
+        -- Cap model: player creations share maxCharacters with ambient spawns (simple,
+        -- no separate accounting). ALTERNATIVE (not taken): a reserved slice so players
+        -- can't starve ambient variety -- would need a second cap + counter here.
+        if (rosterAtCap(faction)) then
+            msg(player, "[ActiveChat] the roster is full -- cannot create another character right now.")
+            return nil
+        end
+        local c, err = createCharacter(opts)
+        if (not c) then
+            local valid = (err == "role" and joinKeys(roleKeys))
+                or (err == "mood"   and joinKeys(moodKeys))
+                or (err == "area"   and joinKeys(AREAS))
+                or (err == "gender" and "male, female, neutral")
+                or (err == "faction" and "alliance, horde")
+                or ""
+            msg(player, string.format("[ActiveChat] invalid %s. valid: %s", err or "value", valid))
+            return nil
+        end
+        createCount[guid] = used + 1
+        msg(player, "[ActiveChat] created " .. summaryLine(c):gsub("^%[ActiveChat%] ", ""))
+        return c
+    end
+
+    -- Parse `.ac create` arg form: k=v tokens with optional quoted values (name="Old
+    -- Borin"). `mood` is an alias for personality. Returns an opts table (validation
+    -- happens in createCharacter; unknown keys are ignored). Quoting only matters for
+    -- name (the rest are single words). Simple split honoring double-quotes.
+    local function parseCreateArgs(rest)
+        local opts = {}
+        -- Tokenize honoring "double quotes" so name="Old Borin" stays one value.
+        for k, v in string.gmatch(rest, '(%w+)%s*=%s*"([^"]*)"') do
+            opts[k] = v
+        end
+        -- Then unquoted k=v (won't re-match the quoted ones: their '=' is consumed, but
+        -- to be safe only set keys not already taken).
+        for k, v in string.gmatch(rest, '(%w+)%s*=%s*([^%s"]+)') do
+            if (opts[k] == nil) then opts[k] = v end
+        end
+        -- `mood` is the user-facing alias for `personality`.
+        if (opts.mood) then opts.personality = opts.personality or opts.mood; opts.mood = nil end
+        -- Only carry through the keys createCharacter understands.
+        return {
+            faction     = opts.faction,
+            role        = opts.role,
+            personality = opts.personality,
+            area        = opts.area,
+            gender      = opts.gender,
+            name        = opts.name,
+        }
+    end
+
+    -- Gossip create wizard ---------------------------------------------------
+    -- Stepwise menu over the live trait vocabularies (roleKeys/moodKeys/AREAS), so new
+    -- vocab appears automatically. Partial selection in pcreate[guid]. intid encodes
+    -- (step*1000 + index); a sentinel range drives confirm/reroll/cancel actions.
+    local STEP_FACTION, STEP_ROLE, STEP_MOOD, STEP_GENDER, STEP_AREA, STEP_CONFIRM = 1, 2, 3, 4, 5, 6
+    local ACT_SPAWN, ACT_REROLL, ACT_CANCEL = 9001, 9002, 9003
+    local factionChoices = { "alliance", "horde" }
+    local genderChoices  = { "male", "female", "neutral" }
+
+    -- Roll a preview name for the current partial selection (gender-correct). Stored on
+    -- the scratch so the confirm step + reroll show the actual name that will be used.
+    local function rollPreviewName(st)
+        local nm = generateName(st.faction or "alliance", st.role or roleKeys[1],
+            st.personality or moodKeys[1], st.gender or "neutral")
+        return nm
+    end
+
+    -- Render the menu for `step` to the player. Each option's intid is step*1000+index.
+    local function sendStep(player, step)
+        player:GossipClearMenu()
+        if (step == STEP_FACTION) then
+            for i, f in ipairs(factionChoices) do player:GossipMenuAddItem(0, "Faction: " .. f, 0, STEP_FACTION * 1000 + i) end
+        elseif (step == STEP_ROLE) then
+            for i, r in ipairs(roleKeys) do player:GossipMenuAddItem(0, "Role: " .. r, 0, STEP_ROLE * 1000 + i) end
+        elseif (step == STEP_MOOD) then
+            for i, m in ipairs(moodKeys) do player:GossipMenuAddItem(0, "Personality: " .. m, 0, STEP_MOOD * 1000 + i) end
+        elseif (step == STEP_GENDER) then
+            for i, g in ipairs(genderChoices) do player:GossipMenuAddItem(0, "Gender: " .. g, 0, STEP_GENDER * 1000 + i) end
+        elseif (step == STEP_AREA) then
+            for i, a in ipairs(AREAS) do player:GossipMenuAddItem(0, "Area: " .. a, 0, STEP_AREA * 1000 + i) end
+        elseif (step == STEP_CONFIRM) then
+            local st = pcreate[player:GetGUIDLow()] or {}
+            player:GossipMenuAddItem(0, string.format("Name: %s (click to re-roll)", st.name or "?"), 0, ACT_REROLL)
+            player:GossipMenuAddItem(0, string.format("Confirm: %s %s/%s/%s in %s",
+                st.faction, st.role, st.personality, st.gender, st.area), 0, ACT_SPAWN)
+            player:GossipMenuAddItem(0, "Cancel", 0, ACT_CANCEL)
+        end
+        player:GossipSendMenu(1, player, PCREATE_MENU)   -- npc_text 1; player is the gossip source
+    end
+
+    local function startWizard(player)
+        if (playerCreateGmOnly) and (not isGm(player)) then
+            msg(player, "[ActiveChat] .ac create is restricted to GMs on this server.")
+            return
+        end
+        pcreate[player:GetGUIDLow()] = {}
+        sendStep(player, STEP_FACTION)
+    end
+
+    -- Gossip select handler for the wizard menu. Advances the scratch one step per
+    -- click; the confirm step spawns / re-rolls the name / cancels.
+    local function onGossipSelect(event, player, object, sender, intid, code, menu_id)
+        if (menu_id ~= PCREATE_MENU) then return end
+        local guid = player:GetGUIDLow()
+        local st = pcreate[guid]
+        if (not st) then player:GossipComplete(); return false end
+
+        if (intid == ACT_CANCEL) then
+            pcreate[guid] = nil
+            player:GossipComplete()
+            msg(player, "[ActiveChat] create cancelled.")
+            return false
+        elseif (intid == ACT_REROLL) then
+            st.name = rollPreviewName(st)
+            sendStep(player, STEP_CONFIRM)
+            return false
+        elseif (intid == ACT_SPAWN) then
+            pcreate[guid] = nil
+            player:GossipComplete()
+            doCreate(player, { faction = st.faction, role = st.role,
+                personality = st.personality, gender = st.gender, area = st.area, name = st.name })
+            return false
+        end
+
+        local step  = math.floor(intid / 1000)
+        local index = intid % 1000
+        if (step == STEP_FACTION) then
+            st.faction = factionChoices[index]; sendStep(player, STEP_ROLE)
+        elseif (step == STEP_ROLE) then
+            st.role = roleKeys[index]; sendStep(player, STEP_MOOD)
+        elseif (step == STEP_MOOD) then
+            st.personality = moodKeys[index]; sendStep(player, STEP_GENDER)
+        elseif (step == STEP_GENDER) then
+            st.gender = genderChoices[index]; sendStep(player, STEP_AREA)
+        elseif (step == STEP_AREA) then
+            st.area = AREAS[index]
+            st.name = rollPreviewName(st)        -- roll a name to show on confirm
+            sendStep(player, STEP_CONFIRM)
+        else
+            player:GossipComplete()
+        end
+        return false
+    end
+    RegisterPlayerGossipEvent(PCREATE_MENU, 2, onGossipSelect)  -- 2 = GOSSIP_EVENT_ON_SELECT
+
+    -- Command hook -----------------------------------------------------------
+    -- PLAYER_EVENT_ON_COMMAND (42): fires on any `.`-prefixed input. We claim only a
+    -- leading "ac" token, dispatch the subcommand, and return false to swallow it (so
+    -- the core doesn't report "unknown command"). Anything else returns nothing and
+    -- passes through untouched. player is nil from the server console -> ignore.
+    local function onCommand(event, player, command)
+        if (not player) then return end
+        -- Match "ac" or "ac <rest>" (case-insensitive head). Leave other commands alone.
+        local head, rest = string.match(command, "^(%S+)%s*(.*)$")
+        if (not head) or (string.lower(head) ~= "ac") then return end
+
+        local sub, args = string.match(rest, "^(%S*)%s*(.*)$")
+        sub = string.lower(sub or "")
+
+        if (sub == "" ) or (sub == "help") then
+            helpText(player)
+        elseif (sub == "who") then
+            cmdWho(player, args ~= "" and args or nil)
+        elseif (sub == "list") then
+            cmdList(player, (args ~= "" and string.lower(args)) or nil)
+        elseif (sub == "create") then
+            if (args == "") then
+                startWizard(player)
+            else
+                doCreate(player, parseCreateArgs(args))
+            end
+        else
+            msg(player, string.format("[ActiveChat] unknown subcommand '%s'.", sub))
+            helpText(player)
+        end
+        return false   -- handled: swallow so the core doesn't flag an unknown command
+    end
+    RegisterPlayerEvent(42, onCommand)   -- 42 = PLAYER_EVENT_ON_COMMAND
+
+    -- Logout cleanup: drop per-player scratch + create-count so memory doesn't grow and
+    -- a relog resets the per-session create allowance.
+    RegisterPlayerEvent(4, function(event, player)   -- 4 = PLAYER_EVENT_ON_LOGOUT
+        if (not player) then return end
+        local guid = player:GetGUIDLow()
+        pcreate[guid]     = nil
+        createCount[guid] = nil
+    end)
+
 end
 
 --[[

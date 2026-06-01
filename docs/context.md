@@ -85,6 +85,20 @@ original random helper.
 > clock (`22:00`), "server time", or a printed date. Time/season come from a *mapping*
 > over the in-game game-time, not a displayed value.
 
+## Context-aware token *values*
+
+Context-awareness also reaches the **value a token resolves to**, not just which line is
+chosen. A few pools where context clearly matters — `%food%`, `%drink%`, `%weather%`,
+`%activity%`, `%critter%` — carry the **same** `times`/`seasons`/`events` tags as lines,
+on their individual entries (`data/tokens.lua`). A shared `selectTagged` biases the pick
+toward what fits the live `ctx` (hard-excluding off-context entries, untagged entries
+always eligible), reusing the very same `timeFactor`/`seasonFactor`/`eventFactor` the
+line scorer uses. So *porridge* surfaces in the morning and *Pilgrim's pie* only during
+Pilgrim's Bounty. With context off/unavailable every value scores equally — the old
+uniform random pick (the same fallback invariant as the line scorer). Abstract pools
+stay untagged. Authoring details and the related `%a…%` article tokens are in
+[placeholders.md](placeholders.md#context-aware-token-values).
+
 ## How context is sourced (and what happens if it can't be)
 
 The whole context subsystem — the cache, its refresh, and the token resolvers — lives in
