@@ -1,23 +1,23 @@
 --[[
   Lively World Chat -- faction-gated edition.
 
-  Content lives in talk_text/npc_text.lua, returning three pools:
+  Content lives in data/chatter.lua, returning three pools:
       shared   -> everyone (SendWorldMessage)   alliance -> team 0   horde -> team 1
   enableFactionChat = false merges all three and broadcasts to everyone (legacy).
 
   Voice: civilian/guard/NPC ambience -- gossip, weather, work, rumor, lore. Never
   LFG/LFM or gearscore talk. %role%/%difficulty%/%gearscore% are for the rare
-  adventurer voice only; prefer world/flavor tokens. See npc_text.lua header.
+  adventurer voice only; prefer world/flavor tokens. See data/chatter.lua header.
 ]]--
 
--- All tunable knobs live in config.lua (single source of truth).
-local config = require("config")
+-- All tunable knobs live in AzerothChatter.lua (single source of truth).
+local config = require("AzerothChatter")
 local enableScript      = config.enableScript
 local enableFactionChat = config.enableFactionChat
 
 if enableScript then
 
--- Config this engine file uses. context.lua reads the rest straight from config.lua.
+-- Config this engine file uses. logic/context.lua reads the rest straight from AzerothChatter.lua.
 local talk_time               = config.talk_time
 local faction_talk_time       = config.faction_talk_time
 local maxCharacters           = config.maxCharacters
@@ -41,19 +41,20 @@ local ns                      = config.ns
 
 local t = {}
 
--- Modules (data + subsystems). require resolves bare names across the script tree:
--- mod-ale adds the script dir AND its subdirectories to package.path, which is why
--- "pools"/"roster_defs" find data/ and "context"/"context_map" find the root. If a
--- split module ever fails to load, confirm that loader behaviour first.
-local pools      = require("pools")        -- data/pools.lua: %token% vocabulary + accessors
-local rosterDefs = require("roster_defs")  -- data/roster_defs.lua: roster identity tables
-local context    = require("context")      -- context.lua: time/event/season cache + resolvers
+-- Modules (data + subsystems). mod-ale adds the module dir AND its subdirectories to
+-- package.path, so dotted names resolve from the AzerothChatter/ root. Paths are
+-- qualified (data.* / logic.*) because basenames collide: data/chatter.lua vs
+-- logic/chatter.lua, and data/context.lua vs logic/context.lua.
+local pools      = require("data.tokens")   -- data/tokens.lua: %token% vocabulary + accessors
+local rosterDefs = require("data.traits")   -- data/traits.lua: roster identity tables
+local context    = require("logic.context") -- logic/context.lua: time/event/season cache + resolvers
 
--- context_map is consulted directly only for the (optional, default-off) event-burst
--- pool fallback below; the rest of its use lives inside context.lua.
+-- data/context.lua (context vocabulary/maps) is consulted directly only for the
+-- (optional, default-off) event-burst pool fallback below; the rest of its use lives
+-- inside logic/context.lua.
 local ctxMap = {}
 do
-    local ok, m = pcall(require, "context_map")
+    local ok, m = pcall(require, "data.context")
     if (ok and type(m) == "table") then ctxMap = m end
 end
 
@@ -67,7 +68,7 @@ local resolveLastEvent = context.resolveLastEvent
 local resolveSeason    = context.resolveSeason
 local resolveTimeOfDay = context.resolveTimeOfDay
 
--- Roster identity tables (see data/roster_defs.lua); roleKeys/moodKeys derived below.
+-- Roster identity tables (see data/traits.lua); roleKeys/moodKeys derived below.
 local AREAS          = rosterDefs.AREAS
 local ROLES          = rosterDefs.ROLES
 local PERSONALITIES  = rosterDefs.PERSONALITIES
@@ -81,7 +82,7 @@ local function recordTopic(line) end
 
 
 -- Load content pools --------------------------------------------------------
-local world = require("npc_text")        -- { shared/alliance/horde = {lines,duos,groups} }
+local world = require("data.chatter")    -- { shared/alliance/horde = {lines,duos,groups} }
 
 -- Tagged-content parser. buildItems flattens typed pools ({lines, duos, groups})
 -- into one cursored item list, each tagged with its `kind`: "line" (single
@@ -263,7 +264,7 @@ else
     hordeCandidates = allianceCandidates
 end
 
--- Roster identity tables (AREAS / ROLES / PERSONALITIES) live in data/roster_defs.lua,
+-- Roster identity tables (AREAS / ROLES / PERSONALITIES) live in data/traits.lua,
 -- required and aliased at the top of this file.
 
 -- Roster state -- in-memory ONLY, never persisted, reset every restart (regrows
@@ -273,7 +274,7 @@ local roster          = {}
 local rosterByFaction = { alliance = {}, horde = {} }
 local usedNames       = {}
 
--- (allianceCities / hordeCities come from data/roster_defs.lua, aliased at top.)
+-- (allianceCities / hordeCities come from data/traits.lua, aliased at top.)
 
 -- Pre-compute role/personality key lists once so
 -- generation can index them uniformly. ROLES is weighted; PERSONALITIES is
@@ -736,7 +737,7 @@ t.init = function(s)
     -- Seed the RNG ONCE at startup (reseeding per line tied variety to the wall clock).
     math.randomseed(os.time())
     math.random(); math.random(); math.random()  -- discard first low-entropy values
-    s.d = require("npc_name") or {}
+    s.d = require("data.names") or {}
     -- Back-compat: a flat name list (no faction keys) is treated as the surname pool.
     if (s.d[1] ~= nil) then s.d = {surnames = s.d} end
     s.d.surnames = s.d.surnames or {}
@@ -828,7 +829,7 @@ end
 -- everyone-visible (audience="shared") by an Alliance cast. Fully nil-/flag-guarded:
 -- never errors, never clobbers an in-progress chain.
 
--- Burst content pool from context_map.lua + inline fallback. Each entry is a
+-- Burst content pool from data/context.lua + inline fallback. Each entry is a
 -- two-line duo chain; %event% is filled at render time.
 local eventBurstPool = (type(ctxMap.eventBurst) == "table" and #ctxMap.eventBurst > 0)
     and ctxMap.eventBurst

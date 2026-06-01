@@ -1,6 +1,6 @@
 # Plan: In-Game Player Commands for ActiveChat
 
-> **Scope note.** Two `.`-commands served from `npcTalk.lua` that let a player **create**
+> **Scope note.** Two `.`-commands served from `logic/chatter.lua` that let a player **create**
 > a roster character (picking traits) and **inspect** an existing one. Out-of-character
 > tooling, not chatter — output goes to the requesting player only, never into World
 > chat. Distinct from `PLAYER_INTERACTION_PLAN.md` (that's in-character *reactions* to
@@ -26,7 +26,7 @@
 
 #### Note
 
-> **Goal.** Two `.` commands, served from `npcTalk.lua`:
+> **Goal.** Two `.` commands, served from `logic/chatter.lua`:
 >
 > 1. **Create a character** — a player spawns a roster character, choosing from the
 >    available traits (faction, role, personality, area, gender, and optionally a name).
@@ -166,7 +166,7 @@ local playerCreateLimit    = 5       -- max characters one player may spawn per 
 
 #### Verification
 
-- `_luacheck.py` on `npcTalk.lua`.
+- `tools/lua_check.py` on `logic/chatter.lua`.
 - Offline: `createCharacter({role="guard", gender="female"})` yields a guard with a
   gender-correct name/prefix (depends on CHARACTERS_PLAN Phase 1 Part A) and is registered once.
 - In-game: `.ac create` walks the menu and the spawned character can speak; `.ac who`

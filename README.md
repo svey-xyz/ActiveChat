@@ -53,7 +53,7 @@ Two timers drive output — an Alliance-driver (shared + Alliance lines) and a H
 
 ## Quick start: add a line
 
-Content lives in `ActiveChat/talk_text/npc_text.lua`. The simplest line is a bare string;
+Content lives in `AzerothChatter/data/chatter.lua`. The simplest line is a bare string;
 add tags only when the content implies a role/mood/area/context:
 
 ```lua
@@ -69,7 +69,7 @@ Full authoring format, tag fields, and the scoring model: [docs/authoring.md](do
 
 ## Configuration
 
-All knobs live in `ActiveChat/config.lua` — master on/off, timer intervals,
+All knobs live in `AzerothChatter/AzerothChatter.lua` — master on/off, timer intervals,
 roster cap, match strengths, and the context-aware flags. Full reference:
 [docs/config.md](docs/config.md).
 

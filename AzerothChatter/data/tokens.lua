@@ -1,13 +1,13 @@
 --[[
   Placeholder vocabulary pools + their selectRandom* accessors.
 
-  Pure data and stateless helpers, split out of npcTalk.lua so the engine file stays
+  Pure data and stateless helpers, split out of logic/chatter.lua so the engine file stays
   about *logic* -- editing chatter selection/scoring never needs this vocabulary in
-  view, and retuning vocabulary never touches the engine. Loaded via require("pools");
+  view, and retuning vocabulary never touches the engine. Loaded via require("data.tokens");
   returns a table P of selectRandom* functions (the raw tables stay module-private --
   the engine only ever picks from them, never indexes them directly).
 
-  Token <-> accessor mapping lives in renderTokens (npcTalk.lua); every accessor here
+  Token <-> accessor mapping lives in renderTokens (logic/chatter.lua); every accessor here
   is wired to a %token% there.
 ]]--
 
@@ -369,7 +369,7 @@ local weathers = {
 
 -- Accessors -----------------------------------------------------------------
 -- One picker per pool; each returns a single random member. Wired to %tokens% in
--- renderTokens (npcTalk.lua).
+-- renderTokens (logic/chatter.lua).
 function P.selectRandomZone()         return zones[math.random(#zones)] end
 function P.selectRandomInstance()     return instances[math.random(#instances)] end
 function P.selectRandomRole()         return roles[math.random(#roles)] end

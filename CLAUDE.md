@@ -13,26 +13,30 @@ day, season, and active in-game holidays.
 
 ## Files (and how much to load)
 
+The module lives under `AzerothChatter/`. `AzerothChatter.lua` is the primary
+entry point and holds all config at the top.
+
 | File | Size | Load it? |
 |---|---|---|
-| `ActiveChat/npcTalk.lua` | ~47 KB / ~1.0k lines | Yes — the engine: parsing, scoring, roster, conversation, render/emit, timers. |
-| `ActiveChat/config.lua` | ~3 KB | Yes — all tunable knobs (flags, intervals, caps, strengths). Edit values here. |
-| `ActiveChat/context.lua` | ~19 KB | Time/event/season cache (`ctx`, `refreshCtx`) + the `%event%`/`%season%`/`%timeofday%` resolvers. Load when touching context logic. |
-| `ActiveChat/data/pools.lua` | ~17 KB | Only when editing `%token%` vocabulary — placeholder pools + their `selectRandom*` accessors. |
-| `ActiveChat/data/roster_defs.lua` | ~4 KB | Roster identity tables (`AREAS`, `ROLES`, `PERSONALITIES`, home cities, colours). |
-| `ActiveChat/context_map.lua` | ~4 KB | Yes — small context vocabulary/maps. |
-| `ActiveChat/npc_name.lua` | ~6 KB | Yes — name pools. |
-| `ActiveChat/talk_text/npc_text.lua` | **~315 KB / 1.5k lines** | **No — see below.** |
-| `ActiveChat/talk_text/npc_text.manifest.md` | tiny | Yes — read this *instead* of the chatter file. |
+| `AzerothChatter/AzerothChatter.lua` | ~3 KB | Yes — entry point + all tunable knobs (flags, intervals, caps, strengths). Edit values here. |
+| `AzerothChatter/logic/chatter.lua` | ~47 KB / ~1.0k lines | Yes — the engine: parsing, scoring, roster, conversation, render/emit, timers. |
+| `AzerothChatter/logic/context.lua` | ~19 KB | Time/event/season cache (`ctx`, `refreshCtx`) + the `%event%`/`%season%`/`%timeofday%` resolvers. Load when touching context logic. |
+| `AzerothChatter/data/tokens.lua` | ~17 KB | Only when editing `%token%` vocabulary — placeholder pools + their `selectRandom*` accessors. |
+| `AzerothChatter/data/traits.lua` | ~4 KB | Roster identity tables (`AREAS`, `ROLES`, `PERSONALITIES`, home cities, colours). |
+| `AzerothChatter/data/context.lua` | ~4 KB | Yes — small context vocabulary/maps. |
+| `AzerothChatter/data/names.lua` | ~6 KB | Yes — name pools. |
+| `AzerothChatter/data/chatter.lua` | **~315 KB / 1.5k lines** | **No — see below.** |
+| `AzerothChatter/meta/chatter.manifest.md` | tiny | Yes — read this *instead* of the chatter file. |
+| `AzerothChatter/tools/` | small | `gen_manifest.py` (regenerate the manifest), `lua_check.py` (syntax-check). |
 | `docs/`, `docs/plans/` | large | **No — only when explicitly told to.** |
 
 ### Hard rules
 
-- **Do not read `talk_text/npc_text.lua`** unless the task is specifically to add or
+- **Do not read `data/chatter.lua`** unless the task is specifically to add or
   modify chatter lines. It is ~315 KB of pure content and will blow your context
-  budget. To understand its shape, read `talk_text/npc_text.manifest.md` instead.
+  budget. To understand its shape, read `meta/chatter.manifest.md` instead.
 - **Do not read anything under `docs/`** unless the user explicitly points you there.
-  The design rationale you'll usually need is already inline in `npcTalk.lua`.
+  The design rationale you'll usually need is already inline in `logic/chatter.lua`.
 - **When working from a plan file, do not load finished phases into context.** Every
   plan file carries a compact summary of completed phases at the top — read that, then
   jump straight to the phase being worked on. Keep that summary up to date as phases
@@ -40,7 +44,7 @@ day, season, and active in-game holidays.
 
 ## The chatter file — working without loading it
 
-`npc_text.lua` returns one table with three faction pools, each holding
+`data/chatter.lua` returns one table with three faction pools, each holding
 `{ lines, duos, groups }`:
 
 - `lines` — single-speaker strings.
@@ -50,36 +54,36 @@ day, season, and active in-game holidays.
 Entries are either bare strings (untagged, fire anywhere) or tables carrying tags
 (`roles`, `moods`, `areas`, `times`, `seasons`, `events`, `eventWindow`,
 `notTimes`/`notSeasons`/`notEvents`, `weight`, `cooldown`, `chain`). Tags are parsed
-by `makeItem` in `npcTalk.lua`; see that function for the normalized item shape.
+by `makeItem` in `logic/chatter.lua`; see that function for the normalized item shape.
 
-**The manifest** (`npc_text.manifest.md`) records pool counts, the `%token%`
+**The manifest** (`meta/chatter.manifest.md`) records pool counts, the `%token%`
 vocabulary, the tag keys in use, and approximate per-pool start lines — enough to
 reason about the content without opening it. Regenerate it after any chatter edit:
 
 ```bash
-cd ActiveChat
-python3 talk_text/gen_manifest.py      # needs: pip3 install lupa --break-system-packages
+cd AzerothChatter
+python3 tools/gen_manifest.py      # needs: pip3 install lupa --break-system-packages
 ```
 
-### Editing chatter (the one time you open `npc_text.lua`)
+### Editing chatter (the one time you open `data/chatter.lua`)
 
 1. Use the manifest to locate the right pool and its line range.
-2. Open `npc_text.lua` with a bounded read around that range — avoid reading the
+2. Open `data/chatter.lua` with a bounded read around that range — avoid reading the
    whole file. Append/edit entries following the existing tag shape.
-3. Any `%token%` you use must already be handled by `renderTokens` in `npcTalk.lua`
+3. Any `%token%` you use must already be handled by `renderTokens` in `logic/chatter.lua`
    (the manifest lists the valid set). Don't invent new tokens without adding the
    matching substitution.
 4. Rerun `gen_manifest.py` and syntax-check (below).
 
 ## Editing tokens
 
-Token substitution runs in a single pass in `renderTokens` (`npcTalk.lua`): one
+Token substitution runs in a single pass in `renderTokens` (`logic/chatter.lua`): one
 `string.gsub(txt, "%%(%w+)%%", …)` dispatches each `%token%` through the
 `tokenResolvers` table (defined just above `renderTokens`). Each entry maps a token
 name to a resolver called as `f(speaker, ctx, item)` — a `pools.selectRandom*`
-accessor (from `data/pools.lua`) or a context resolver from `context.lua`
+accessor (from `data/tokens.lua`) or a context resolver from `logic/context.lua`
 (`resolveEvent`, `resolveSeason`, `resolveTimeOfDay`, …). To add a token: add its pool
-+ accessor in `data/pools.lua` (or a resolver in `context.lua`), add ONE line to
++ accessor in `data/tokens.lua` (or a resolver in `logic/context.lua`), add ONE line to
 `tokenResolvers`, then use it in chatter — no per-token gsub plumbing. An unmapped `%token%` is left intact (visible,
 never crashes), so orphans don't error. Context-aware tokens (`%event%`, `%season%`,
 `%timeofday%`, `%nextevent%`, `%lastevent%`) resolve from the `ctx` cache and fall
@@ -87,22 +91,30 @@ back to random when context is off or unavailable — preserve that fallback inv
 
 ## Module map (so you can jump to the right file, not scroll)
 
-The engine is split across `require`d modules (mod-ale adds the script dir **and its
-subdirs** to `package.path`, so bare `require("pools")`/`require("context")` resolve
-files in `data/` and the root alike):
+The engine is split across `require`d modules. mod-ale adds the module dir **and its
+subdirs** to `package.path`, so modules are required by **dotted, directory-qualified
+names** (`require("data.tokens")`, `require("logic.context")`). The qualification is
+load-bearing: `data/chatter.lua` vs `logic/chatter.lua` and `data/context.lua` vs
+`logic/context.lua` share a basename, so a bare `require("chatter")`/`require("context")`
+would be ambiguous. If a split module ever fails to load, confirm that loader
+behaviour first.
 
-- `config.lua` — every tunable flag/value. Single source of truth; `npcTalk.lua` and
-  `context.lua` each pull what they need into locals. **Change behaviour here.**
-- `data/pools.lua` (`pools`) — `%token%` vocabulary + `selectRandom*` accessors; the
+- `AzerothChatter.lua` (`require("AzerothChatter")`) — entry point + every tunable
+  flag/value. Single source of truth; `logic/chatter.lua` and `logic/context.lua` each
+  pull what they need into locals. **Change behaviour here.**
+- `data/tokens.lua` (`pools`) — `%token%` vocabulary + `selectRandom*` accessors; the
   engine never indexes the raw tables.
-- `data/roster_defs.lua` (`rosterDefs`) — `AREAS`/`ROLES`/`PERSONALITIES`, home cities,
+- `data/traits.lua` (`rosterDefs`) — `AREAS`/`ROLES`/`PERSONALITIES`, home cities,
   colour palette. `roleKeys`/`moodKeys` are derived from these in the engine.
-- `context.lua` (`context`) — the time/event/season cache (`ctx`, `refreshCtx`,
+- `data/context.lua` (`ctxMap`) — small context vocabulary/maps (eventId→name,
+  month→season, neutral events) consumed by `logic/context.lua` and the event-burst.
+- `data/names.lua` — NPC display-name source pools.
+- `logic/context.lua` (`context`) — the time/event/season cache (`ctx`, `refreshCtx`,
   `nearestEvents`, schedule read) and the `%event%`/`%nextevent%`/`%lastevent%`/
   `%season%`/`%timeofday%` resolvers. The engine captures `context.ctx` once (it's
   mutated in place) and registers its `fireEventBurst` via `context.setEventBurstHook`.
 
-Then within `npcTalk.lua`: config + module wiring → tag normalization (`normalize*`,
+Then within `logic/chatter.lua`: config + module wiring → tag normalization (`normalize*`,
 `makeItem`, `buildItems`) → character roster (`generateCharacter`, `resolveSpeaker`,
 `pickCharacter`) → line scoring (`scoreLine` and its `*Factor` functions, which read
 `ctx` + the context flags) → conversation state (`nextLine`, `assembleCast`) →
@@ -112,11 +124,12 @@ rendering & emission (`tokenResolvers`/`renderTokens`, `formatWorld`, `emit`, `s
 ## Verify before finishing
 
 These files load via ALE's `require`, so a plain `lua` runner isn't here, but syntax
-checks well with `lupa`:
+checks well with `lupa` via `tools/lua_check.py`:
 
 ```bash
-cd ActiveChat
-python3 -c "from lupa import LuaRuntime; L=LuaRuntime(); [L.compile(open(f).read()) for f in ['npcTalk.lua','config.lua','context.lua','data/pools.lua','data/roster_defs.lua','context_map.lua','npc_name.lua']]; print('OK')"
+cd AzerothChatter
+python3 tools/lua_check.py AzerothChatter.lua logic/chatter.lua logic/context.lua \
+  data/tokens.lua data/traits.lua data/context.lua data/names.lua data/chatter.lua
 ```
 
 After chatter edits, also confirm no orphan tokens (every `%token%` in the chatter is

@@ -18,7 +18,7 @@
 ## Completed
 
 - Base character system — DONE. Lazy roster, `generateCharacter` / `buildName` /
-  `renderTokens` machinery in `npcTalk.lua`. The extensions below are planned.
+  `renderTokens` machinery in `logic/chatter.lua`. The extensions below are planned.
 
 ---
 
@@ -29,7 +29,7 @@
 #### Note
 
 > Added after the base character system shipped. These build on the existing
-> `generateCharacter` / `buildName` / `renderTokens` machinery in `npcTalk.lua`.
+> `generateCharacter` / `buildName` / `renderTokens` machinery in `logic/chatter.lua`.
 > The common thread: the character currently stores only a finished `name` *string*,
 > which is the root cause of three separate problems (mismatched gendered prefixes,
 > no pronoun control, no clean way to shorten a name for address). Storing the
@@ -74,10 +74,10 @@ local character = {
 ```
 
 **Gender assignment & gendered name pools.** Split the first-name pools in
-`npc_name.lua` by gender so the chosen gender drives a matching first name:
+`data/names.lua` by gender so the chosen gender drives a matching first name:
 
 ```lua
--- npc_name.lua
+-- data/names.lua
 alliance = { male = {"Aldric","Cedric",…}, female = {"Eleanor","Rowena",…},
              neutral = {"Sprocket","Cogwhistle",…} },   -- gnome/utility names can stay neutral
 horde    = { male = {…}, female = {…}, neutral = {…} },
@@ -188,7 +188,7 @@ the default; only resolve target-pronouns for explicitly third-person reply line
 you add a tag for it. Simpler first cut: ship `%target%`/`%targetfull%` only.
 
 **Authoring.** `%target%` is meaningful only inside `duos`/`groups`. Document in
-`npc_text.manifest.md`'s token list and the README that it's chain-only and falls
+`meta/chatter.manifest.md`'s token list and the README that it's chain-only and falls
 back to a vocative elsewhere. Add `%target%` to `renderTokens` *and* the
 `gen_manifest.py` token set so the orphan-token check stays honest.
 

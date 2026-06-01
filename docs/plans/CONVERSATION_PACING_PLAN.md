@@ -110,7 +110,7 @@ once the burst timer owns continuation, the ambient tick must yield.)
 
 #### Part B — Config + opt-in
 
-**Config additions (`config.lua`).**
+**Config additions (`AzerothChatter.lua`).**
 
 ```lua
 local enableBurstConversations = true        -- false = legacy one-line-per-ambient-tick
@@ -147,7 +147,7 @@ on the ambient tick) so this is a clean opt-in.
 
 #### Verification
 
-- `_luacheck.py` on `npcTalk.lua`.
+- `tools/lua_check.py` on `logic/chatter.lua`.
 - In-game: start a duo and confirm its two lines land ~`convLineGap` apart even with
   `talk_time` widened to a sparse setting; confirm single lines are unaffected; confirm
   no channel ever emits two overlapping items; toggle `enableBurstConversations=false`

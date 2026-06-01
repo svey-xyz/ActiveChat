@@ -46,7 +46,7 @@ to stay global). Same list/map/hard-exclude shape as `areas`. See README.md
             Unlisted seasons HARD-EXCLUDED. Pairs with the %season% token.
   events -- holiday/game-event fit (BINARY, no weights). LIST of display-names
             (e.g. {"Hallow's End"}) = fires ONLY while one of those events is live;
-            otherwise HARD-EXCLUDED. Names must match context_map.lua's eventId->name
+            otherwise HARD-EXCLUDED. Names must match data/context.lua's eventId->name
             map. Pairs with %event%; for a tagged line %event% resolves to the tag.
   eventWindow -- widen an `events` line beyond "live only": "active" (default),
             "approach" (also the N-day run-up, pairs with %nextevent%), or "after"
@@ -76,7 +76,7 @@ World/flavor: %profession% %activity% %city% %race% %monster% %critter% %boss%
 %event% %season% %timeofday% %weather% %shop% %route% %tale% %npc% %currency%
 %food% %drink% %tradegood% %companion% %enchant% %toy% %herb% %ore% %gem% %fish%.
 Discouraged (player-imitation; see Tone below): %role% %difficulty% %gearscore%.
-See README.md or the pools near the top of npcTalk.lua for the full list.
+See README.md or the pools near the top of logic/chatter.lua for the full list.
 
 Tone: in-world roleplay chatter spoken by CIVILIANS, GUARDS, VENDORS, and the
 occasional road-weary adventurer talking about life in Azeroth. These are NPCs,
@@ -316,7 +316,7 @@ return {
       -- Festivals & holidays. These name a SPECIFIC holiday, so they carry an
       -- `events` tag (Phase 3): the line fires ONLY while that game_event is
       -- live, and a hard-exclude when it isn't (CONTEXT_AWARE_PLAN.md). Display
-      -- names match context_map.lua's eventId->name map exactly.
+      -- names match data/context.lua's eventId->name map exactly.
       { "%event% decorations are going up in the cities already. My liver is filing a formal complaint.", events={"Brewfest"} },
       { "Word is %event%'s back in town. I've already lost my month's gold to a goblin and a ring toss.", events={"the Darkmoon Faire"} },
       { "%event% bonfire in the square this %timeofday%. Bring a costume, leave with candy and a headache.", events={"Hallow's End"}, times={night=2, dusk=1} },
@@ -332,7 +332,7 @@ return {
       -- fire in the N-day run-up to its event (keyed to ctx.nextEvent, paired with
       -- %nextevent%); `eventWindow="after"` fires in the N-day wind-down (keyed to
       -- ctx.lastEvent, paired with %lastevent%). Display names match
-      -- context_map.lua exactly.
+      -- data/context.lua exactly.
       { "Only a few days until %nextevent% -- have you hung the holly yet? The shops are already out of ribbon.",
         events={"Winter Veil"}, eventWindow="approach" },
       { "Folk are stocking up before %nextevent%. Best buy your candles now, the prices double once it starts.",

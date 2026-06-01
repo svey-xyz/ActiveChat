@@ -71,11 +71,11 @@ Two consequences shape everything below:
 
 #### Current architecture (what we build on)
 
-`ActiveChat/npcTalk.lua` (single script, `if enableScript then … end`):
+`AzerothChatter/logic/chatter.lua` (single script, `if enableScript then … end`):
 
 - Config flags: `enableScript`, `enableGuildChat`, `enableFactionChat`; interval
   pairs `talk_time`, `guild_talk_time`, `faction_talk_time`, `guild_faction_time`.
-- Content loaded from `talk_text/npc_text.lua` and `npc_text_guild.lua`, each
+- Content loaded from `data/chatter.lua` and `npc_text_guild.lua`, each
   returning `{ shared, alliance, horde }`, where every faction pool is
   `{ lines, duos, groups }` (one-liners, two-speaker exchanges, multi-voice
   threads). `buildItems` flattens these into a cursored, kind-tagged item list.
@@ -101,13 +101,13 @@ these helpers.
 
 | File | Change |
 |---|---|
-| `ActiveChat/npcTalk.lua` | Add config block, normalize/fuzzy utils, per-player state, chat hooks, response scheduler, logout cleanup. Keep new logic in this file's scope so it reuses existing closures (`nameFrom`, `formatWorld`, placeholder subst). *Simple > complex — no new shared module unless it grows.* |
-| `ActiveChat/talk_text/npc_reactions.lua` | **New.** In-character reaction content keyed by category × faction. Mirrors the `{shared, alliance, horde}` shape so faction gating is consistent. |
+| `AzerothChatter/logic/chatter.lua` | Add config block, normalize/fuzzy utils, per-player state, chat hooks, response scheduler, logout cleanup. Keep new logic in this file's scope so it reuses existing closures (`nameFrom`, `formatWorld`, placeholder subst). *Simple > complex — no new shared module unless it grows.* |
+| `AzerothChatter/talk_text/npc_reactions.lua` | **New.** In-character reaction content keyed by category × faction. Mirrors the `{shared, alliance, horde}` shape so faction gating is consistent. |
 | `README.md` | Document the feature, config flags, and how to add reaction categories/threads — with the in-character authoring rule called out. |
 
 > **Cross-reference (context-aware chatter).** Responders read the shared `ctx`
 > table — the single source of "what's true right now" (time/season/active +
-> nearest events) populated by `refreshCtx()` in `context.lua` — so reaction
+> nearest events) populated by `refreshCtx()` in `logic/context.lua` — so reaction
 > content can carry the same `times`/`events`/`seasons` tags and resolve
 > `%event%`/`%season%`/`%timeofday%` to the live moment. The event-activation burst
 > hook also lives in `refreshCtx()` (behind `enableEventBurst`): when an event flips
@@ -366,7 +366,7 @@ local replyToFactionRoom       = false       -- false=reply to player only; true
   `enableCrossFactionTaunts` both ways, log out mid-delay (no error / no orphan
   reply).
 - **Tone check:** read every reaction line aloud and confirm it would fit beside
-  the ambient RP in `npc_text.lua` — if it sounds like a real player or a forum
+  the ambient RP in `data/chatter.lua` — if it sounds like a real player or a forum
   post, it doesn't ship.
 - **Regression:** confirm ambient World/Guild timers still fire unchanged.
 

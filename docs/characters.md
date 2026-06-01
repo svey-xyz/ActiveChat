@@ -67,7 +67,7 @@ generation:
 
 ## Name generation
 
-Names are built from `ActiveChat/npc_name.lua`
+Names are built from `AzerothChatter/data/names.lua`
 (`{ alliance = <first names>, horde = <first names>, surnames = <list> }`) plus the
 role prefixes and personality epithets in `ROLES` / `PERSONALITIES`. One of four
 weighted patterns is chosen per character:
@@ -80,12 +80,12 @@ weighted patterns is chosen per character:
 | `{first}` (bare) | 10% | *Maelara* |
 
 Names are de-duplicated against the live roster (bounded retry). You can optionally
-feed additional surnames from the world DB via the `ns` query string in `config.lua`.
+feed additional surnames from the world DB via the `ns` query string in `AzerothChatter.lua`.
 
 ## Roles, personalities, areas
 
 These three identity vocabularies are each defined in **exactly one table** in
-`ActiveChat/data/roster_defs.lua` (required as `rosterDefs`). To add or change one, edit
+`AzerothChatter/data/traits.lua` (required as `rosterDefs`). To add or change one, edit
 only that table — no engine changes needed.
 
 - **`ROLES`** (civic/occupation archetypes). Each entry has name `prefixes`, a

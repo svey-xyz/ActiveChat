@@ -1,8 +1,9 @@
 --[[
-  ActiveChat configuration -- the single source of truth for every tunable knob.
-
-  Required by npcTalk.lua (the engine) and context.lua; each pulls the values it
-  needs into locals. Edit values HERE, not in the engine. Returns one flat table.
+  AzerothChatter -- module entry point and the single source of truth for every
+  tunable knob. This is the primary file: it carries all config at the top and is
+  required by the engine (logic/chatter.lua) and logic/context.lua as require("AzerothChatter"),
+  each pulling the values it needs into locals. Edit values HERE, not in the engine.
+  Returns one flat config table.
 
   NOTE: a nil-valued key (maxCharactersPerFaction) is simply absent from the table;
   reading it still yields nil, which is the intended "unset" sentinel.
@@ -42,6 +43,6 @@ return {
     enableEventBurst     = false,   -- one-shot "festival has begun" burst on activation
 
     -- Optional WorldDBQuery string to source NPC names from the DB. Blank => names
-    -- come from npc_name.lua.
+    -- come from data/names.lua.
     ns = "",
 }

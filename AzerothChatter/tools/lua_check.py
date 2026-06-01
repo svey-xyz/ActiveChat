@@ -2,7 +2,7 @@
 """Syntax-check Lua files (compile-only, like `luac -p`) using lupa's bundled LuaJIT.
 
 Usage:
-    python3 docs/plans/_luacheck.py <file.lua> [<file2.lua> ...]
+    python3 tools/lua_check.py <file.lua> [<file2.lua> ...]
 
 Compiles each file's source WITHOUT executing it, so Eluna globals
 (CreateLuaEvent, GetPlayersInWorld, require, ...) are irrelevant — only
@@ -28,7 +28,7 @@ def check(path):
 
 def main(argv):
     if not argv:
-        print("usage: _luacheck.py <file.lua> ...", file=sys.stderr)
+        print("usage: lua_check.py <file.lua> ...", file=sys.stderr)
         return 2
     ok_all = True
     for p in argv:

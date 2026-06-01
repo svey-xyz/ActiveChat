@@ -5,9 +5,9 @@ this is the closing record.
 
 ## Outcome
 
-The engine was modularised and the fixes below landed. `npcTalk.lua` 1860 → ~1036 lines.
-New modules: `config.lua` (all knobs), `context.lua` (time/event/season cache + resolvers),
-`data/pools.lua` (token vocabulary + accessors), `data/roster_defs.lua` (roster identity
+The engine was modularised and the fixes below landed. `logic/chatter.lua` 1860 → ~1036 lines.
+New modules: `AzerothChatter.lua` (all knobs), `logic/context.lua` (time/event/season cache + resolvers),
+`data/tokens.lua` (token vocabulary + accessors), `data/traits.lua` (roster identity
 tables). Layout and module map are documented in `CLAUDE.md`.
 
 ## Fixes applied
@@ -20,7 +20,7 @@ tables). Layout and module map are documented in `CLAUDE.md`.
   `normalizeWeightedSet`; dead `[0]` cursor removed; `dt` rename (no shadow of `t`);
   on-load `PrintInfo`. Event-burst kept inline but clearly tagged optional (too coupled
   to extract cleanly).
-- **Structure:** `pools` / `roster_defs` / `context` extracted via `require`.
+- **Structure:** `data.tokens` / `data.traits` / `logic.context` extracted via `require`.
 - **Repo hygiene:** `.DS_Store` + the skill-eval workspace added to `.gitignore`; the 23
   committed eval-artifact files were untracked (`git rm --cached`, kept on disk).
 
@@ -32,6 +32,7 @@ context cache populates, load line fires.
 
 ## Deployment note
 
-`require("config"/"context"/"pools"/"roster_defs")` relies on mod-ale adding the script
-dir **and subdirs** to `package.path` (same mechanism that already loads `npc_text`).
-Confirm with one `.reload ale`.
+`require("AzerothChatter"/"logic.context"/"data.tokens"/"data.traits")` relies on mod-ale
+adding the module dir **and subdirs** to `package.path` (same mechanism that already loads
+`data.chatter`). Dotted names are required because `data/chatter.lua` vs `logic/chatter.lua`
+and `data/context.lua` vs `logic/context.lua` share basenames. Confirm with one `.reload ale`.

@@ -1,29 +1,29 @@
 --[[
   Context awareness -- the "what's true in the world right now" subsystem: a slow,
   TTL-cached snapshot of time-of-day, active/near holidays, and season, plus the
-  token resolvers that read it. Split out of npcTalk.lua so the engine file is about
+  token resolvers that read it. Split out of logic/chatter.lua so the engine file is about
   selection/conversation logic; this file owns everything clock/calendar/event.
 
-  Loaded via require("context"). Returns:
+  Loaded via require("logic.context"). Returns:
     M.ctx                      -- the live cache table (mutated in place by refreshCtx;
                                   a captured reference stays valid)
     M.refreshCtx()             -- TTL-guarded refresh, called each emission
     M.resolveEvent/NextEvent/LastEvent/Season/TimeOfDay  -- %token% resolvers
-    M.setEventBurstHook(fn)    -- engine registers fireEventBurst here (see npcTalk.lua)
+    M.setEventBurstHook(fn)    -- engine registers fireEventBurst here (see logic/chatter.lua)
 
   Every dimension is flag- and API-guarded: a disabled flag or a missing ALE API
   leaves that field neutral and the resolver falls back to a random pool value --
   no silent characters, no errors. Preserve that fallback invariant.
 ]]--
 
-local config = require("config")
-local pools  = require("pools")
+local config = require("AzerothChatter")
+local pools  = require("data.tokens")
 
--- Context vocabulary/maps from context_map.lua (eventIdToName, monthToSeason,
+-- Context vocabulary/maps from data/context.lua (eventIdToName, monthToSeason,
 -- eventNeutral). Guarded so a missing/broken file falls back to inline defaults.
 local ctxMap = {}
 do
-    local ok, m = pcall(require, "context_map")
+    local ok, m = pcall(require, "data.context")
     if (ok and type(m) == "table") then ctxMap = m end
 end
 
@@ -356,7 +356,7 @@ end
 M.resolveSeason = resolveSeason
 
 -- Festival-agnostic phrases used when no real holiday is active/near, so a character
--- never names a specific holiday out of context. From context_map.lua + inline fallback.
+-- never names a specific holiday out of context. From data/context.lua + inline fallback.
 local eventNeutralPool = (type(ctxMap.eventNeutral) == "table" and #ctxMap.eventNeutral > 0)
     and ctxMap.eventNeutral
     or { "the next festival", "the holidays", "the coming festivities" }

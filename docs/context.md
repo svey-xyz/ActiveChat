@@ -57,7 +57,7 @@ fallback the matcher needs.
   notTimes={"night","dusk"} },
 ```
 
-Event display-names must match the names in `context_map.lua` exactly (e.g.
+Event display-names must match the names in `data/context.lua` exactly (e.g.
 `"the Harvest Festival"`, `"the Midsummer Fire Festival"` — articles included).
 
 ## The context tokens
@@ -88,7 +88,7 @@ original random helper.
 ## How context is sourced (and what happens if it can't be)
 
 The whole context subsystem — the cache, its refresh, and the token resolvers — lives in
-`ActiveChat/context.lua` (required as `context`; the engine captures `context.ctx` once
+`AzerothChatter/logic/context.lua` (`require("logic.context")`, aliased to `context`; the engine captures `context.ctx` once
 and reads it live). Context is read into the cached `ctx` table on a slow cadence (TTL
 `contextRefreshMs`, default 60s) — never recomputed per candidate line. Every source is
 **capability-guarded**: if the API is absent, that field stays neutral, the matching
@@ -102,7 +102,7 @@ factor stays `1.0`, and the token goes random — never an error, never silence.
 | Season | the in-game month, with a holiday cross-check (e.g. Winter Veil ⇒ winter regardless of month). | `%season%` random; `seasons` tags never exclude. |
 
 The vocabulary and mappings live in a small author-editable data file,
-**`ActiveChat/context_map.lua`** — same philosophy as `npc_name.lua`. It holds
+**`AzerothChatter/data/context.lua`** — same philosophy as `data/names.lua`. It holds
 `eventIdToName` (game-event ID → display name), `monthToSeason` (override for themed or
 southern-hemisphere realms), `eventNeutral` (the neutral phrase pool), and `eventBurst`
 (below). Edit these without touching the engine.

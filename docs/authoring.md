@@ -1,6 +1,6 @@
 # Authoring content
 
-World chatter lives in `ActiveChat/talk_text/npc_text.lua`. It returns three pools:
+World chatter lives in `AzerothChatter/data/chatter.lua`. It returns three pools:
 
 ```lua
 return {
@@ -17,7 +17,7 @@ Each pool has three lists — the **three conversation shapes**:
 - **`groups`** — group discussions; a rotating cast of 4–6 voices, one line each, no
   voice speaking twice in a row.
 
-The header comment block at the top of `npc_text.lua` is the canonical authoring
+The header comment block at the top of `data/chatter.lua` is the canonical authoring
 reference. Keep new lines **in-character** — no real-world references, no fourth-wall
 jokes; Azeroth is real to these voices.
 

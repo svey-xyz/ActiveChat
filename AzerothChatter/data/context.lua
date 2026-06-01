@@ -1,7 +1,7 @@
 --[[
   Context vocabulary & mappings for context-aware chatter. Plain data tables, kept
-  out of the engine so content authors can retune them without touching npcTalk.lua.
-  Loaded via require("context_map"); returns one table of named maps.
+  out of the engine so content authors can retune them without touching logic/chatter.lua.
+  Loaded via require("data.context"); returns one table of named maps.
 ]]--
 
 local M = {}
@@ -77,6 +77,6 @@ M.monthToSeason = {
     [12] = "winter",  -- December
 }
 
--- Future: M.timeKeyDisplay (timeKey -> display pool) may move here from npcTalk.lua.
+-- Future: M.timeKeyDisplay (timeKey -> display pool) may move here from logic/chatter.lua.
 
 return M

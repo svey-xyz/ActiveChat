@@ -45,7 +45,7 @@
 
 **Current architecture (what we change).**
 
-- **Timers** (`npcTalk.lua` bottom): `alliance`-driver on `talk_time` carrying
+- **Timers** (`logic/chatter.lua` bottom): `alliance`-driver on `talk_time` carrying
   `shared`+`alliance`; `horde`-driver on `faction_talk_time` carrying `horde`. Faction
   is the timer axis.
 - **`emit`** routes by the line's `audience` tag to world/team broadcast. No zone
@@ -61,7 +61,7 @@ Largest extension; land after the smaller ones. Conversation chains must stay wi
 conversation state must be keyed by zone bucket, not just faction, once delivery is
 per-zone. See `TODO.md` for cross-plan ordering.
 
-#### Part A — Zone classification maps (`context_map.lua`)
+#### Part A — Zone classification maps (`data/context.lua`)
 
 Zone tables belong with the other tuning maps. Add three, keyed off the existing
 `zones`/`cities` vocabulary and the AzerothCore zone IDs ALE exposes via
@@ -172,7 +172,7 @@ local cityTopicBias        = true   -- bias %city% toward listener's nearest cap
 #### Build order
 
 1. **Data maps** — add `zoneToArea` / `zoneToRegion` / `zoneToNearestCity` to
-   `context_map.lua` (IDs + name fallback) with safe defaults; unit-check every
+   `data/context.lua` (IDs + name fallback) with safe defaults; unit-check every
    `zones`/`cities` entry resolves.
 2. **Character home zone** — add `homeZone`/`homeRegion` to `generateCharacter`
    (faction/role biased); leave `area`/`homeCity` untouched.
@@ -200,7 +200,7 @@ local cityTopicBias        = true   -- bias %city% toward listener's nearest cap
 
 #### Verification
 
-- `_luacheck.py` on touched files; a map-coverage check (every `zones`/`cities` entry
+- `tools/lua_check.py` on touched files; a map-coverage check (every `zones`/`cities` entry
   is classified).
 - Offline: `proximityFactor` returns the expected ordering (home-zone > home-region >
   elsewhere) and `cityFor` picks the nearest capital for a sample of zones.

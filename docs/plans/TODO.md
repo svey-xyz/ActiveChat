@@ -62,8 +62,8 @@ Independent tracks: **{A→B,C}**, **{E→D}**, **{Zone + Pacing}**, **{Player c
   current behavior when off or when an ALE API is missing (the context engine's
   discipline).
 - **Ephemeral roster** — no persistence; player-created characters vanish on restart.
-- **Verify** — `_luacheck.py` + `phase5_verify.py` + `pass1_render_check.py` after each
-  change; regenerate `npc_text.manifest.md` after any chatter edit.
+- **Verify** — `tools/lua_check.py` + `phase5_verify.py` + `pass1_render_check.py` after each
+  change; regenerate `meta/chatter.manifest.md` after any chatter edit.
 
 ## Smaller / loose items
 

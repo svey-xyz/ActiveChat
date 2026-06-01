@@ -5,11 +5,11 @@
     alliance -> per-faction FIRST names (human / dwarf / night elf / draenei / gnome flavor).
     horde    -> per-faction FIRST names (orc / tauren / troll / forsaken / blood elf flavor).
     surnames -> faction-agnostic SURNAME pool (Stormbringer, Frostguard, ...), used by the
-                "{first} {last}" name pattern in generateName (see npcTalk.lua).
+                "{first} {last}" name pattern in generateName (see logic/chatter.lua).
 
   generateName draws a first name from the speaker's faction pool and (for most
   patterns) a surname from the shared surnames pool. The optional DB-name source
-  (the `ns` query in npcTalk.lua) appends into `surnames`.
+  (the `ns` query in logic/chatter.lua) appends into `surnames`.
 ]]--
 
 local names = {

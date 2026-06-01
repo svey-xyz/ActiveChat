@@ -3,8 +3,8 @@
   shape: locale affinities, civic/occupation archetypes, personality descriptors,
   per-faction home cities, and the name-colour palette.
 
-  Pure data, split out of npcTalk.lua so tuning the roster's "cast of types" never
-  touches engine logic. Loaded via require("roster_defs"); returns one table.
+  Pure data, split out of logic/chatter.lua so tuning the roster's "cast of types" never
+  touches engine logic. Loaded via require("data.traits"); returns one table.
   Derived lookups (roleKeys/moodKeys) are computed in the engine from these.
 ]]--
 
