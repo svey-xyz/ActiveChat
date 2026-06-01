@@ -794,6 +794,14 @@ return {
       { chain={"My family's name has graced this realm for nine generations.", "And what's it graced lately besides the tax rolls?", "...I'll have you know I funded the new orphanage wing.", "Then your name's done one fine thing. Build a second wing and I'll even mean the bow."}, roles={"noble"}, moods={"boastful","wry"}, areas={city=2} },
       { chain={"Spare a coin for an orphan, kind sir?", "I've nothing on me, lad. Truly.", "Then spare a story instead. The ones with full purses never have time for those.", "...sit down, then. You've earned a tale and half my bread for the asking of it."}, roles={"urchin","adventurer"}, moods={"kindly","wry"}, areas={city=2, road=1} },
       { chain={"The little ones run the rooftops better than my guards run the streets.", "They know every gutter and gap in the city, m'lady.", "Then hire them. A coin and a hot meal buys sharper eyes than any patrol.", "...you'd make a fearsome spymaster. The urchins would adore you."}, roles={"noble","urchin"}, moods={"greedy","wry"}, areas={city=2} },
+      -- ============================================================
+      -- == TARGET TOKEN BATCH: shared duos with %target%/%targetfull%
+      -- ============================================================
+      { chain={"%target%! When did you get back?", "Three days. Trying to be quiet about it.", "Three days and half the market's talking. Quiet didn't take.", "...I owe the whole square a round, don't I.", "Starting with me. Inside — the round's on you and the story's mine."}, roles={"adventurer","citizen"}, moods={"warm","cheerful"}, areas={"city"} },
+      { chain={"%target%, stop. Tracks on the left. Fresh.", "I see them. Keep walking, don't reach.", "Whatever made them is close.", "Walk toward the road. Normal pace. We don't run until I say."}, roles={"adventurer","soldier"}, moods={"nervous","brave"}, areas={wilderness=3, road=1} },
+      { chain={"Rest here or push on to the next post? Call it, %target%.", "Push. We've two hours of light.", "My boots voted to stop an hour back.", "Your boots are outvoted."}, roles={"adventurer"}, moods={"weary","gruff"}, areas={road=3} },
+      { chain={"You want someone who knows the %zone% road? %targetfull%. No one knows it better.", "You're making me sound grander than I am.", "You walked it twice in one %season%, once at night in %weather% with no lantern. I'll make you as grand as I like."}, roles={"adventurer"}, moods={"warm","boastful"}, areas={road=2, city=1} },
+      { chain={"%targetfull%.", "...you only use the full name when something's wrong.", "Sit down. Drink. Then tell me what really happened at %zone%.", "...it was worse than the reports said.", "I know. That's why I'm asking you instead of reading them."}, roles={"soldier","adventurer"}, moods={"solemn","gruff"}, areas={"city"} },
     },
     -- group discussions (many voices, rotating cast of 4-6)
     groups = {
@@ -858,6 +866,11 @@ return {
       -- == Wilderness & road groups (expansion) ==
       { chain={"Round the fire, then — what's the wildest thing you've met out in the deep wilds?", "A stag white as snow that stood and watched me a full minute, then was just... gone. No sound.", "%rare%, if you'll believe it. Saw it once, never again. Half think I dreamed it.", "A whole ruined keep swallowed by the forest, doors still hung, table still set. No bones. Just left.", "...I don't camp near ruins. Ever. You can keep your set tables, friend.", "Coward.", "Wise coward. There's a difference, and the difference is still breathing.", "Fair. To the wise cowards, then — they outlive the brave ones and inherit the good stories."}, roles={"adventurer"}, moods={"dreamy","cowardly"}, areas={wilderness=3} },
       { chain={"Caravan's stopped for the night. Anyone know why we took the long road, not the pass?", "Bandits in the pass. Three caravans gone this %season%. The master's no fool.", "I heard it's worse than bandits. Something came down out of the high country.", "%monster%, they're saying. Whole hunting parties not coming back.", "...and we're sleeping in the open because of this? I'd sooner risk the bandits.", "Bandits you can pay. The other thing you can only run from, and it runs faster.", "So we keep the fires high, the watch doubled, and our mouths shut about it near the children.", "Aye. Loud fire, quiet talk, sharp eyes. We'll see %city% yet. Now who's got the first watch?"}, roles={"adventurer","soldier"}, moods={"nervous","brave"}, areas={road=2, wilderness=2} },
+      -- ============================================================
+      -- == TARGET TOKEN BATCH: shared groups with %target%/%targetfull%
+      -- ============================================================
+      { chain={"Round the table — best thing you've each done that nobody knows about?", "Pulled a stranger off the %route% in the worst of the %weather% and never learned their name.", "Kept the inn lamp burning past closing for a soldier I knew was coming down the road.", "Carried a wounded man two miles back to the line and told no one.", "...%target%, you've gone quiet.", "I've nothing worth telling.", "%targetfull% — that's the third time tonight. It's becoming the most interesting thing at this table.", "...perhaps tomorrow night. Tonight I'll just listen."}, roles={"soldier","adventurer","innkeeper"}, moods={"kindly","warm"}, areas={city=1, road=1} },
+      { chain={"Settle the road argument: the %route% or the long way round through %zone%?", "The %route%. Faster, clear, done.", "Bandit welcome mat, more like. Long way every time.", "Long way's two extra days and harder ground.", "Cost me a wagon of %tradegood% last %season%, the %route% did.", "And the long way cost me an ankle.", "...%target%, you've done both this year. Which was worse?", "Whichever one you lot were on. Half the trouble on the road is the company.", "...fair. To the roads, then. Whatever we lose on them, at least we lose it together."}, roles={"adventurer","farmer","vendor"}, moods={"wry","weary"}, areas={road=3} },
     },
   },
 
@@ -1150,6 +1163,11 @@ return {
       { chain={"Did you SEE what Lady Whitford wore to the Cathedral gala?", "Three layers of Silverpine silk in high summer. She nearly fainted in the receiving line.", "Beauty before breathing, darling. Always has been.", "And THAT is why I summer in Ironforge."}, roles={"noble"}, moods={"gossipy","wry"}, areas={"city"} },
       { chain={"Oi, hold your purse near the fountain, milord's not looking.", "You warning me or robbing me, kid?", "Warning. The robbing's the OTHER lad. I'm an honest urchin, me.", "...here's a copper for honesty, then. Now scram."}, roles={"urchin","noble"}, moods={"wry","greedy"}, areas={"city"} },
       { chain={"Spare a coin for a cold kid, sir?", "Here. And take this bread, I've no stomach for it.", "Light bless you, milord, you're the kind one.", "Don't tell anyone. I've a reputation for being a miser to maintain."}, roles={"urchin","noble"}, moods={"kindly","wry"}, areas={"city"} },
+      -- ============================================================
+      -- == TARGET TOKEN BATCH: alliance duos with %target%/%targetfull%
+      -- ============================================================
+      { chain={"%target%! Where in the Light — the muster was an hour ago.", "Cathedral. Collapsed wall, lost child, bishop who needed talking down.", "You'll need that story for the captain, word for word.", "I have a note from the bishop. And a repaired wall. And one very relieved child.", "...I'm walking you to the captain myself. This I want to see."}, roles={"soldier","priest"}, moods={"gruff","warm"}, areas={"city"} },
+      { chain={"Need the Redridge run done right? There's one name: %targetfull%.", "You're very kind, but —", "Three runs through gnoll country without losing a crate. I'm not kind, I'm accurate.", "The crates had good company. That's all it was.", "I'm telling this to the whole tavern and you're going to stand there looking humble."}, roles={"adventurer","soldier"}, moods={"warm","brave"}, areas={road=2, city=1} },
     },
     -- group discussions (many voices, rotating cast of 4-6)
     groups = {
@@ -1486,6 +1504,11 @@ return {
       { chain={"Did you SEE what Lady Sunwhisper wore to the magisters' gala?", "Three layers of enchanted silk in high summer. She nearly swooned in the receiving line, darling.", "Beauty before breathing. Silvermoon's eternal motto.", "And THAT, darling, is why I summer in cool Thunder Bluff with the savages."}, roles={"noble"}, moods={"gossipy","wry"}, areas={"city"} },
       { chain={"Oi, mind your purse near the Drag fountain, your lordship, the guards ain't looking.", "You warning me or robbing me, kid?", "Warning, mon. The robbing's the OTHER kid. I'm an honest little thief, me.", "...here's a copper for the honesty, then. Now vanish."}, roles={"urchin","noble"}, moods={"wry","greedy"}, areas={"city"} },
       { chain={"Spare a coin for a cold kid, your grace?", "Here. And take this skewer, mon, I've no stomach for it this %timeofday%.", "The loa bless you, lordling, you're the kind one.", "Tell no one. I've a reputation as a Silvermoon miser to protect."}, roles={"urchin","noble"}, moods={"kindly","wry"}, areas={"city"} },
+      -- ============================================================
+      -- == TARGET TOKEN BATCH: horde duos with %target%/%targetfull%
+      -- ============================================================
+      { chain={"%target%! On me — we hold this ground!", "Against WHAT?", "Everything over the ridge — MOVE!", "Right, yes, moving, very clear battle plan!"}, roles={"soldier"}, moods={"brave","nervous"}, areas={battlefield=3} },
+      { chain={"For the record, %targetfull% was the only one who thought to bring a lantern into the catacombs.", "I've been in a lot of catacombs.", "That is not the reassurance you think it is.", "...follow the light, then. And do not touch the walls."}, roles={"adventurer","citizen"}, moods={"wry","nervous"}, areas={"city"} },
     },
     -- group discussions (many voices, rotating cast of 4-6)
     groups = {
